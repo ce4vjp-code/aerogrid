@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PowerScan 3D - C# Native Edition</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-section">
+                <i class="fa-solid fa-bolt-lightning logo-icon"></i>
+                <div class="title-group">
+                    <h1>PowerScan 3D <span class="badge-csharp">C# .NET 10</span></h1>
+                    <p class="subtitle">Inspección de Servidumbres Eléctricas con Dron, GeoTIFF y KMZ</p>
+                </div>
+            </div>
+            
+            <div class="header-status">
+                <div class="status-pill csharp-pill">
+                    <i class="fa-solid fa-microchip"></i>
+                    <span>Motor Nativo C# (NetTopologySuite + LibTiff)</span>
+                </div>
+                <div class="corridor-badge">
+                    <i class="fa-solid fa-ruler-horizontal"></i>
+                    <span>Servidumbre: <strong id="headerCorridorWidth">20 m</strong> (±10m)</span>
+                </div>
+                <button id="btnResetWorkspace" class="btn-clear-workspace" title="Borrar foto y KMZ actual para repetir el proceso">
+                    <i class="fa-solid fa-trash-can"></i>
+                    <span>Limpiar Mapa</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Body Area -->
+        <div class="app-body">
+            <!-- Sidebar Controls & Metrics -->
+            <aside class="sidebar">
+                <!-- 1. GeoTIFF Orthophoto Upload Panel -->
+                <div class="panel-section geotiff-section">
+                    <div class="section-header justify-between">
+                        <div class="flex-align">
+                            <i class="fa-solid fa-mountain-sun"></i>
+                            <h3>1. Ortofoto Real (GeoTIFF)</h3>
+                        </div>
+                        <span class="badge badge-tiff" id="tiffStatusBadge">GeoTIFF 180MB+</span>
+                    </div>
+
+                    <p class="section-desc">Carga tu ortofoto georreferenciada (.tif) o procesa tus fotos crudas de dron (.jpg con GPS).</p>
+                    
+                    <div class="kmz-btn-group">
+                        <button id="btnLoadGeoTiff" class="btn-primary btn-tiff" style="flex: 1.2;">
+                            <i class="fa-solid fa-file-image"></i>
+                            <span>Cargar GeoTIFF...</span>
+                        </button>
+                        <button id="btnOpenOdmModal" class="btn-secondary" style="flex: 1; border-color: rgba(0, 229, 255, 0.4); color: var(--accent-cyan);" title="Generar ortofoto desde fotos crudas">
+                            <i class="fa-solid fa-camera"></i>
+                            <span>Fotos Dron</span>
+                        </button>
+                    </div>
+
+                    <button id="btnLoadFlightShots" class="btn-secondary" style="width: 100%; margin-top: 4px; border-color: rgba(163, 113, 247, 0.4); color: var(--accent-purple);" title="Seleccionar archivo de disparos (.MRK, .CSV, .TXT) o carpeta de vuelo">
+                        <i class="fa-solid fa-plane-up"></i>
+                        <span>Cargar Disparos / Telemetría (.MRK, .CSV)...</span>
+                    </button>
+
+                    <!-- Biblioteca Desplegable de Ortofotos y Telemetría -->
+                    <div class="library-dropdown-wrap" style="margin-top: 8px;">
+                        <div style="font-size: 11px; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <span><i class="fa-solid fa-box-archive" style="color: var(--accent-purple);"></i> Biblioteca Ortofotos / Telemetría:</span>
+                            <button id="btnOpenTiffLibFolder" class="btn-lib-link" title="Abrir carpeta biblioteca en Windows">
+                                <i class="fa-solid fa-folder-tree"></i> Abrir Carpeta
+                            </button>
+                        </div>
+                        <select id="selectLibraryGeoTiff" class="select-library">
+                            <option value="">🗺️ Seleccionar ortofoto guardada en biblioteca...</option>
+                        </select>
+                    </div>
+
+                    <!-- Drone Flight Trajectory Info Card -->
+                    <div class="kmz-info-card" id="flightInfoCard" style="display: none; border-color: rgba(163, 113, 247, 0.4); background: linear-gradient(180deg, rgba(163, 113, 247, 0.08) 0%, var(--bg-card) 100%);">
+                        <div class="kmz-info-header">
+                            <div class="kmz-title-wrap">
+                                <i class="fa-solid fa-route" style="color: var(--accent-purple);"></i>
+                                <strong id="flightNameText">Telemetría de Vuelo</strong>
+                            </div>
+                            <label class="switch-toggle" title="Mostrar/Ocultar Traza de Vuelo">
+                                <input type="checkbox" id="flightVisibilityToggle" checked>
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+                        <div class="kmz-stats-grid">
+                            <span>Disparos: <strong id="flightShotsCount">0 fotos</strong></span>
+                            <span>Altitud: <strong id="flightAvgAlt">0 m</strong></span>
+                        </div>
+                        <div class="kmz-btn-group" style="margin-top: 6px;">
+                            <button id="btnFocusFlight" class="btn-tiny" style="flex: 1;">
+                                <i class="fa-solid fa-crosshairs"></i> Centrar Ruta
+                            </button>
+                            <button id="btnGenerateFlightOrthoDirect" class="btn-tiny" style="flex: 1.4; background: linear-gradient(135deg, #00e5ff, #0081cb); color: #000; font-weight: 700; border: none;" title="Unir fotos aéreas y proyectar ortofoto sobre el mapa">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Generar Ortofoto
+                            </button>
+                        </div>
+                        <!-- Progreso en tarjeta de vuelo -->
+                        <div class="scan-progress-container" id="flightCardProgressBox" style="display: none; margin-top: 6px; padding: 6px 8px; background: rgba(0,0,0,0.3); border-radius: 4px;">
+                            <div class="progress-labels" style="font-size: 10px;">
+                                <span id="flightCardStatusText" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;">Generando ortofoto...</span>
+                                <span id="flightCardPercentText">0%</span>
+                            </div>
+                            <div class="progress-bar-track" style="height: 4px;">
+                                <div class="progress-bar-fill" id="flightCardProgressBar" style="width: 0%;"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- GeoTIFF Info Card -->
+                    <div class="kmz-info-card" id="geotiffInfoCard" style="display: none;">
+                        <div class="kmz-info-header">
+                            <div class="kmz-title-wrap">
+                                <i class="fa-solid fa-circle-check" style="color: var(--risk-safe);"></i>
+                                <strong id="geotiffFileName">ortofoto.tif</strong>
+                            </div>
+                            <span class="badge" id="geotiffGsdBadge">GSD: 3.2 cm/px</span>
+                        </div>
+                        <div class="kmz-stats-grid">
+                            <span>Dimensiones: <strong id="geotiffDimensions">0 x 0 px</strong></span>
+                            <span>Sistema: <strong id="geotiffCrs">UTM / WGS84</strong></span>
+                        </div>
+                        <div class="kmz-btn-group" style="margin-top: 4px;">
+                            <button id="btnFocusGeoTiff" class="btn-tiny" style="flex: 1;">
+                                <i class="fa-solid fa-crosshairs"></i> Centrar Vista
+                            </button>
+                            <button id="btnShowTiffDebug" class="btn-tiny" style="flex: 1;" title="Ver metadatos técnicos y coordenadas">
+                                <i class="fa-solid fa-circle-info"></i> Diagnóstico
+                            </button>
+                        </div>
+                        <button id="btnAlignTiffWithKmz" class="btn-tiny" style="margin-top: 4px; background: rgba(0, 229, 255, 0.1); border-color: rgba(0, 229, 255, 0.3); color: var(--accent-cyan);">
+                            <i class="fa-solid fa-arrows-to-eye"></i> Alinear Ortofoto con Traza KMZ
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 2. KMZ / KML Overlay Panel -->
+                <div class="panel-section kmz-section">
+                    <div class="section-header justify-between">
+                        <div class="flex-align">
+                            <i class="fa-solid fa-layer-group"></i>
+                            <h3>2. Línea y Torres (KMZ / KML)</h3>
+                        </div>
+                        <span class="badge badge-accent" id="kmzStatusBadge">Servidumbre 20m</span>
+                    </div>
+
+                    <p class="section-desc">Carga uno o varios archivos KMZ/KML (ej: <strong>Redes + Postes</strong> con Ctrl) para superponerlos simultáneamente.</p>
+                    
+                    <div class="kmz-btn-group">
+                        <button id="btnLoadKMZFile" class="btn-secondary" style="flex: 1.2;" title="Selecciona uno o más archivos KML/KMZ con Ctrl">
+                            <i class="fa-solid fa-folder-open"></i>
+                            <span>Cargar KML/KMZ (Múltiple)...</span>
+                        </button>
+                        <button id="btnToggleKMZView" class="btn-secondary" style="flex: 0.9; border-color: rgba(0, 229, 255, 0.4); color: var(--accent-cyan);" title="Apagar o encender la visualización de líneas y postes KMZ">
+                            <i class="fa-solid fa-eye-slash" id="iconToggleKMZView"></i>
+                            <span id="textToggleKMZView">Apagar KMZ</span>
+                        </button>
+                    </div>
+
+                    <!-- Biblioteca Desplegable de Capas KMZ / KML -->
+                    <div class="library-dropdown-wrap" style="margin-top: 8px;">
+                        <div style="font-size: 11px; color: var(--text-secondary); display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+                            <span><i class="fa-solid fa-box-archive" style="color: var(--accent-cyan);"></i> Biblioteca de Capas KMZ/KML:</span>
+                            <button id="btnOpenKmzLibFolder" class="btn-lib-link" title="Abrir carpeta biblioteca en Windows">
+                                <i class="fa-solid fa-folder-tree"></i> Abrir Carpeta
+                            </button>
+                        </div>
+                        <select id="selectLibraryKMZ" class="select-library">
+                            <option value="">📁 Seleccionar capa guardada en biblioteca...</option>
+                        </select>
+                    </div>
+
+                    <!-- KMZ Layer Info Card -->
+                    <div class="kmz-info-card" id="kmzInfoCard" style="display: none;">
+                        <div class="kmz-info-header">
+                            <div class="kmz-title-wrap">
+                                <i class="fa-solid fa-file-lines"></i>
+                                <strong id="kmzFileName">Ningún archivo cargado</strong>
+                            </div>
+                            <label class="switch-toggle" title="Mostrar/Ocultar Líneas KMZ">
+                                <input type="checkbox" id="kmzVisibilityToggle" checked>
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+                        <div class="kmz-stats-grid">
+                            <span>Servidumbre: <strong style="color: var(--risk-medium);">20 metros (±10m)</strong></span>
+                            <span>Entidades: <strong id="kmzFeatureCount">7</strong></span>
+                        </div>
+                        <div class="flex-align justify-between" style="margin-top: 4px; padding-top: 4px; border-top: 1px dashed rgba(255, 255, 255, 0.1);">
+                            <span style="font-size: 11px; color: var(--text-secondary);"><i class="fa-solid fa-draw-polygon" style="color: #ffcc00;"></i> Franja Servidumbre:</span>
+                            <label class="switch-toggle" title="Mostrar/Ocultar Polígono de Servidumbre">
+                                <input type="checkbox" id="corridorVisibilityToggle" checked>
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+                        <button id="btnFocusKMZ" class="btn-tiny" style="margin-top: 4px;">
+                            <i class="fa-solid fa-crosshairs"></i> Centrar Vista en KMZ
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 3. Analysis Configuration Section -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <i class="fa-solid fa-sliders"></i>
+                        <h3>3. Parámetros de Análisis</h3>
+                    </div>
+                    
+                    <div class="input-group">
+                        <div class="label-with-val">
+                            <label for="corridorSlider">Ancho de Servidumbre:</label>
+                            <span class="val-display" id="corridorSliderVal">20 m</span>
+                        </div>
+                        <input type="range" id="corridorSlider" min="5" max="40" value="20" step="1" class="slider">
+                        <small class="help-text">Buffer paramétrico calculado por NetTopologySuite (±10 m)</small>
+                    </div>
+
+                    <div class="input-group" style="margin-top: 4px;">
+                        <div class="label-with-val">
+                            <label for="sensitivitySlider">Sensibilidad de Detección:</label>
+                            <span class="val-display" id="sensitivitySliderVal" style="color: var(--accent-cyan);">Nivel 4 (Alta)</span>
+                        </div>
+                        <input type="range" id="sensitivitySlider" min="1" max="5" value="4" step="1" class="slider" style="accent-color: var(--accent-cyan);">
+                        <small class="help-text">Nivel 4-5 detecta pinos oscuros, eucaliptos y vegetación mixta</small>
+                    </div>
+
+                    <button id="btnRunAnalysis" class="btn-primary btn-run-analysis" style="margin-top: 4px;">
+                        <i class="fa-solid fa-play"></i>
+                        <span>Ejecutar Detección Real de Vegetación</span>
+                    </button>
+
+                    <!-- Scanning Progress Bar -->
+                    <div class="scan-progress-container" id="scanProgressBox" style="display: none;">
+                        <div class="progress-labels">
+                            <span id="scanStatusText">Procesando píxeles de vegetación en C#...</span>
+                            <span id="scanPercentText">0%</span>
+                        </div>
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="scanProgressBar"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. KPI Cards Section -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        <h3>Métricas de Vegetación</h3>
+                    </div>
+
+                    <div class="kpi-grid">
+                        <div class="kpi-card total">
+                            <div class="kpi-val" id="kpiTotal">0</div>
+                            <div class="kpi-lbl">Árboles en Servidumbre (20m)</div>
+                        </div>
+                        <div class="kpi-card critical">
+                            <div class="kpi-val" id="kpiCritical">0</div>
+                            <div class="kpi-lbl">Críticos (&lt; 4m)</div>
+                        </div>
+                        <div class="kpi-card medium">
+                            <div class="kpi-val" id="kpiMedium">0</div>
+                            <div class="kpi-lbl">Riesgo Alto (4-7m)</div>
+                        </div>
+                        <div class="kpi-card safe">
+                            <div class="kpi-val" id="kpiSafe">0</div>
+                            <div class="kpi-lbl">Preventivos (7-10m)</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. Risk Filter Section -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <i class="fa-solid fa-filter"></i>
+                        <h3>Filtrar por Nivel de Riesgo</h3>
+                    </div>
+                    <div class="filter-pills">
+                        <button class="filter-pill active" data-filter="all">Todos (<span id="countAll">0</span>)</button>
+                        <button class="filter-pill filter-crit" data-filter="CRITICO">Críticos (<span id="countCrit">0</span>)</button>
+                        <button class="filter-pill filter-med" data-filter="ALTO,MEDIO">Medios (<span id="countMed">0</span>)</button>
+                        <button class="filter-pill filter-safe" data-filter="BAJO">Preventivos (<span id="countLow">0</span>)</button>
+                    </div>
+                </div>
+
+                <!-- 6. Tree Inventory Table -->
+                <div class="panel-section flex-grow">
+                    <div class="section-header justify-between">
+                        <div class="flex-align">
+                            <i class="fa-solid fa-list-check"></i>
+                            <h3>Inventario de Árboles Detectados</h3>
+                        </div>
+                        <span class="badge" id="tableRecordCount">0 registros</span>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Especie</th>
+                                    <th>Distancia</th>
+                                    <th>Riesgo</th>
+                                    <th>Altura</th>
+                                    <th>Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody id="treeTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Export Actions -->
+                <div class="export-actions">
+                    <button id="btnExportPDF" class="btn-primary" style="flex: 100%; margin-bottom: 4px; background: linear-gradient(135deg, #b71c1c, #e53935);">
+                        <i class="fa-solid fa-file-pdf"></i>
+                        <span>Generar Informe PDF (QuestPDF C#)</span>
+                    </button>
+                    <button id="btnExportCSV" class="btn-secondary">
+                        <i class="fa-solid fa-file-csv"></i>
+                        <span>Exportar CSV</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Map Viewport -->
+            <main class="map-wrapper">
+                <div id="map"></div>
+
+                <!-- Orthophoto Opacity & Controls Bar -->
+                <div class="map-overlay-card orthophoto-toolbar">
+                    <div class="ortho-title">
+                        <i class="fa-solid fa-camera-retro"></i>
+                        <span>Ortofoto:</span>
+                    </div>
+                    <div class="opacity-slider-wrap">
+                        <span>Opacidad:</span>
+                        <input type="range" id="orthoOpacitySlider" min="0.1" max="1.0" step="0.05" value="1.0">
+                        <span id="orthoOpacityVal">100%</span>
+                    </div>
+
+                    <!-- Botón para apagar/encender mapa base satelital -->
+                    <button id="btnToggleBaseLayer" class="btn-toggle-base" title="Ocultar o mostrar el mapa satelital de fondo">
+                        <i class="fa-solid fa-eye-slash" id="iconToggleBase"></i>
+                        <span id="textToggleBase">Apagar Mapa Satelital</span>
+                    </button>
+                    <button id="btnMeasureTool" class="btn-toggle-base" style="background: rgba(0, 229, 255, 0.2); border-color: #00e5ff; color: #00e5ff; margin-left: 10px;" title="Medir distancia manualmente en el mapa">
+                        <i class="fa-solid fa-ruler"></i>
+                        <span>Medir Distancia</span>
+                    </button>
+                    <button id="btnToggleHeatmap" class="btn-toggle-base" style="background: rgba(255, 100, 0, 0.2); border-color: #ff6600; color: #ff6600; margin-left: 10px;" title="Activar/Desactivar Mapa de Calor de Riesgos">
+                        <i class="fa-solid fa-fire"></i>
+                        <span>Mapa de Calor</span>
+                    </button>
+
+                    <!-- Botón para apagar/encender franja de servidumbre -->
+                    <button id="btnToggleCorridorLayer" class="btn-toggle-base" style="background: rgba(255, 204, 0, 0.15); border-color: rgba(255, 204, 0, 0.4); color: var(--risk-medium);" title="Ocultar o mostrar la franja de servidumbre de 20 metros">
+                        <i class="fa-solid fa-draw-polygon" id="iconToggleCorridor"></i>
+                        <span id="textToggleCorridor">Apagar Servidumbre</span>
+                    </button>
+                </div>
+
+                <!-- Map Mode Layer Selector -->
+                <div class="map-overlay-card layer-switcher">
+                    <button class="layer-btn active" data-layer="orthophoto">
+                        <i class="fa-solid fa-satellite"></i> Satelital
+                    </button>
+                    <button class="layer-btn" data-layer="dark">
+                        <i class="fa-solid fa-moon"></i> Carto Oscuro
+                    </button>
+                    <button class="layer-btn" data-layer="osm">
+                        <i class="fa-solid fa-map"></i> Topográfico
+                    </button>
+                    <button class="layer-btn" id="btnLocateMe" style="border-color: rgba(0, 229, 255, 0.4); color: var(--accent-cyan);" title="Centrar mapa en mi ubicación actual">
+                        <i class="fa-solid fa-location-crosshairs"></i> Mi Ubicación
+                    </button>
+                </div>
+
+                <!-- Floating Map Controls / Legend -->
+                <div class="map-overlay-card map-legend" id="mapLegendCard">
+                    <div class="legend-header" id="legendHeaderToggle" title="Minimizar / Expandir Simbología">
+                        <h4><i class="fa-solid fa-layer-group"></i> <span>Simbología</span></h4>
+                        <button class="btn-minimize-legend" id="btnMinimizeLegend" title="Minimizar / Expandir">
+                            <i class="fa-solid fa-chevron-down" id="iconMinimizeLegend"></i>
+                        </button>
+                    </div>
+                    <div class="legend-content" id="legendBodyContent">
+                        <div class="legend-item">
+                            <span class="legend-line line-kmz"></span>
+                            <span>Traza Conductor KMZ</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-polygon corridor-20m"></span>
+                            <span>Servidumbre Legal (<strong id="legendCorridorWidth">20m</strong>)</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-icon tower-icon"><i class="fa-solid fa-tower-broadcast"></i></span>
+                            <span>Torres y Postes Eléctricos</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-circle dot-critical"></span>
+                            <span>Árbol Crítico (&lt; 4m) - Tala/Poda</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-circle dot-medium"></span>
+                            <span>Árbol Medio (4-7m) - Poda</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="legend-circle dot-safe"></span>
+                            <span>Árbol Preventivo (7-10m)</span>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- GeoTIFF Diagnostic Modal -->
+    <div class="modal-backdrop" id="tiffDebugModal" style="display: none;">
+        <div class="modal-card" style="width: 580px;">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <i class="fa-solid fa-microchip modal-icon" style="color: var(--accent-purple);"></i>
+                    <div>
+                        <h3>Diagnóstico Técnico de la Ortofoto</h3>
+                        <p id="debugModalSubtitle">Metadatos de georreferenciación y raster</p>
+                    </div>
+                </div>
+                <button class="btn-close" id="btnCloseDebugModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="modal-body">
+                <pre id="debugModalContent" style="background: var(--bg-main); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan); max-height: 260px; overflow-y: auto; white-space: pre-wrap; line-height: 1.5;"></pre>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn-secondary" id="btnCloseDebugModalBtn">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tree Detail Modal -->
+    <div class="modal-backdrop" id="treeModal" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <i class="fa-solid fa-tree modal-icon"></i>
+                    <div>
+                        <h3 id="modalTreeId">ARB-001</h3>
+                        <p id="modalTreeSpecies">Eucalipto</p>
+                    </div>
+                </div>
+                <button class="btn-close" id="btnCloseModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="modal-body">
+                <div class="modal-grid">
+                    <div class="detail-item">
+                        <span class="detail-lbl">Distancia al Cable KMZ:</span>
+                        <strong class="detail-val highlight" id="modalTreeDist">2.4 m</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Nivel de Riesgo:</span>
+                        <strong class="detail-val" id="modalTreeRisk">CRÍTICO</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Altura Estimada (m):</span>
+                        <div style="display: flex; gap: 5px;">
+                            <input type="number" id="modalTreeHeightInput" step="0.5" style="width: 70px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); color: white; padding: 4px; border-radius: 4px;" value="18.5" />
+                            <button id="btnUpdateHeight" style="background: var(--accent-purple); color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px;"><i class="fa-solid fa-check"></i></button>
+                        </div>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Diámetro de Copa:</span>
+                        <strong class="detail-val" id="modalTreeCrown">6.2 m</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Coordenadas GPS:</span>
+                        <strong class="detail-val mono" id="modalTreeCoords">-33.435123, -70.647890</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Confianza IA / ExG:</span>
+                        <strong class="detail-val" id="modalTreeConf">96.8%</strong>
+                    </div>
+                </div>
+
+                <div class="action-box" id="modalActionBox">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>Acción Recomendada:</strong>
+                        <p id="modalTreeAction">Programar brigada de tala/poda inmediata antes de energización.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="display: flex; justify-content: space-between;">
+                <button class="btn-primary" id="btnFocusMapFromModal" style="background: rgba(255, 51, 102, 0.2); color: #ff3366; border: 1px solid #ff3366;">
+                    <i class="fa-solid fa-trash"></i> Eliminar (Falso Positivo)
+                </button>
+                <button class="btn-primary" id="btnFocusMapFromModalDefault">
+                    <i class="fa-solid fa-crosshairs"></i> Centrar en Mapa
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebODM Photogrammetry Processing Modal -->
+    <div class="modal-backdrop" id="odmModal" style="display: none;">
+        <div class="modal-card" style="width: 580px;">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <i class="fa-solid fa-camera-retro modal-icon" style="color: var(--accent-cyan);"></i>
+                    <div>
+                        <h3>Generador Fotogramétrico Dron (SfM / ODM)</h3>
+                        <p>Convierte fotos crudas (.JPG) en ortofoto GeoTIFF georreferenciada</p>
+                    </div>
+                </div>
+                <button class="btn-close" id="btnCloseOdmModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 12px;">
+                <div class="panel-section" style="background: var(--bg-main);">
+                    <label style="font-size: 12px; font-weight: 600; color: var(--text-primary);">1. Carpeta con Fotos Dron (.JPG con GPS EXIF):</label>
+                    <div style="display: flex; gap: 8px; margin-top: 4px;">
+                        <input type="text" id="odmFolderPath" readonly placeholder="Ninguna carpeta seleccionada..." style="flex: 1; background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; padding: 6px 10px; font-size: 12px;">
+                        <button id="btnBrowseDroneFolder" class="btn-secondary" style="flex: initial;">
+                            <i class="fa-solid fa-folder-open"></i> Explorar...
+                        </button>
+                    </div>
+                    <div id="odmPhotoSummary" style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: none;">
+                        <i class="fa-solid fa-circle-check" style="color: var(--risk-safe);"></i> <span id="odmPhotoCountText">0 fotos listas para procesamiento</span>
+                    </div>
+                </div>
+
+                <div class="panel-section" style="background: var(--bg-main);">
+                    <label style="font-size: 12px; font-weight: 600; color: var(--text-primary);">2. Perfil de Procesamiento SfM:</label>
+                    <select id="odmPresetSelect" style="margin-top: 4px; background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; padding: 8px; font-size: 12px; width: 100%;">
+                        <option value="corridor" selected>⚡ Inspección de Líneas Eléctricas / Corredor (Rápido + DSM)</option>
+                        <option value="highres">🎯 Alta Resolución (GSD 2.5 cm/px - Máxima Calidad)</option>
+                        <option value="fast">⏱️ Vista Previa Rápida (Baja Resolución)</option>
+                    </select>
+                </div>
+
+                <!-- Live Progress Box -->
+                <div class="scan-progress-container" id="odmProgressBox" style="display: none;">
+                    <div class="progress-labels">
+                        <span id="odmStatusText">Iniciando motor fotogramétrico OpenSfM / WebODM...</span>
+                        <span id="odmPercentText">0%</span>
+                    </div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="odmProgressBar" style="width: 0%;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="display: flex; justify-content: space-between;">
+                <button class="btn-secondary" id="btnCloseOdmModalBtn">Cancelar</button>
+                <button class="btn-primary" id="btnStartOdmProcessing" style="background: linear-gradient(135deg, #00b0ff, #0081cb);">
+                    <i class="fa-solid fa-play"></i> Iniciar Generación de Ortofoto
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Drone Aerial Photo Inspection Modal -->
+    <div class="modal-backdrop" id="dronePhotoModal" style="display: none;">
+        <div class="modal-card" style="width: 760px; max-width: 95vw;">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <i class="fa-solid fa-camera modal-icon" style="color: var(--accent-cyan);"></i>
+                    <div>
+                        <h3 id="photoModalTitle">DJI_0001_V.JPG</h3>
+                        <p id="photoModalSubtitle">Disparo #1 | RTK Fix | Altitud: 199.8 m</p>
+                    </div>
+                </div>
+                <button class="btn-close" id="btnClosePhotoModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body" style="text-align: center; background: #0b0f19;">
+                <div id="photoModalLoading" style="padding: 40px; color: var(--text-secondary);">
+                    <i class="fa-solid fa-spinner fa-spin fa-2x"></i>
+                    <p style="margin-top: 8px;">Cargando fotografía original del dron...</p>
+                </div>
+                <img id="photoModalImg" style="width: 100%; max-height: 480px; object-fit: contain; border-radius: 6px; display: none;" />
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+                <span id="photoModalCoords" style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan);">-37.079992, -72.554584</span>
+                <button class="btn-secondary" id="btnClosePhotoModalBtn">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toastBox">
+        <i class="fa-solid fa-circle-check"></i>
+        <span id="toastMessage">Operación completada con éxito</span>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="leaflet-heat.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

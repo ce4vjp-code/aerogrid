@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PowerScan 3D - C# Native Edition</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-section">
+                <i class="fa-solid fa-bolt-lightning logo-icon"></i>
+                <div class="title-group">
+                    <h1>PowerScan 3D <span class="badge-csharp">C# .NET 10</span></h1>
+                    <p class="subtitle">Inspección de Servidumbres Eléctricas con Dron, Ortomosaicos y KMZ</p>
+                </div>
+            </div>
+            
+            <div class="header-status">
+                <div class="status-pill csharp-pill">
+                    <i class="fa-solid fa-microchip"></i>
+                    <span>Motor Nativo C# (NetTopologySuite)</span>
+                </div>
+                <div class="corridor-badge">
+                    <i class="fa-solid fa-ruler-horizontal"></i>
+                    <span>Servidumbre: <strong id="headerCorridorWidth">20 m</strong> (±10m)</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Body Area -->
+        <div class="app-body">
+            <!-- Sidebar Controls & Metrics -->
+            <aside class="sidebar">
+                <!-- KMZ / KML Overlay Panel -->
+                <div class="panel-section kmz-section">
+                    <div class="section-header justify-between">
+                        <div class="flex-align">
+                            <i class="fa-solid fa-layer-group"></i>
+                            <h3>Sobreponer Archivo KMZ / KML</h3>
+                        </div>
+                        <span class="badge badge-accent" id="kmzStatusBadge">KMZ Nativo C#</span>
+                    </div>
+
+                    <p class="section-desc">Selecciona cualquier archivo KMZ/KML desde tu PC para sobreponerlo instantáneamente sobre el ortomosaico de alta resolución.</p>
+                    
+                    <div class="kmz-btn-group">
+                        <button id="btnLoadKMZFile" class="btn-secondary">
+                            <i class="fa-solid fa-folder-open"></i>
+                            <span>Examinar Archivo KMZ...</span>
+                        </button>
+                        <button id="btnLoadSampleKMZ" class="btn-secondary btn-sample">
+                            <i class="fa-solid fa-bolt"></i>
+                            <span>KMZ Muestra (220kV)</span>
+                        </button>
+                    </div>
+
+                    <!-- KMZ Layer Info Card -->
+                    <div class="kmz-info-card" id="kmzInfoCard">
+                        <div class="kmz-info-header">
+                            <div class="kmz-title-wrap">
+                                <i class="fa-solid fa-file-lines"></i>
+                                <strong id="kmzFileName">LAT_220kV_Muestra.kmz</strong>
+                            </div>
+                            <label class="switch-toggle" title="Mostrar/Ocultar KMZ">
+                                <input type="checkbox" id="kmzVisibilityToggle" checked>
+                                <span class="slider-round"></span>
+                            </label>
+                        </div>
+                        <div class="kmz-stats-grid">
+                            <span>Entidades: <strong id="kmzFeatureCount">7</strong></span>
+                            <span>Tipo: <strong>Línea + 6 Torres</strong></span>
+                        </div>
+                        <button id="btnFocusKMZ" class="btn-tiny">
+                            <i class="fa-solid fa-crosshairs"></i> Centrar Vista en KMZ
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Analysis Configuration Section -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <i class="fa-solid fa-sliders"></i>
+                        <h3>Parámetros de Servidumbre</h3>
+                    </div>
+                    
+                    <div class="input-group">
+                        <div class="label-with-val">
+                            <label for="corridorSlider">Ancho de Franja Total:</label>
+                            <span class="val-display" id="corridorSliderVal">20 m</span>
+                        </div>
+                        <input type="range" id="corridorSlider" min="5" max="40" value="20" step="1" class="slider">
+                        <small class="help-text">Cálculo geométrico instantáneo en C# (±10 m del eje)</small>
+                    </div>
+
+                    <button id="btnRunAnalysis" class="btn-primary">
+                        <i class="fa-solid fa-play"></i>
+                        <span>Ejecutar Análisis de Vegetación</span>
+                    </button>
+
+                    <!-- Scanning Progress Bar -->
+                    <div class="scan-progress-container" id="scanProgressBox" style="display: none;">
+                        <div class="progress-labels">
+                            <span id="scanStatusText">Iniciando escaneo con motor C#...</span>
+                            <span id="scanPercentText">0%</span>
+                        </div>
+                        <div class="progress-bar-track">
+                            <div class="progress-bar-fill" id="scanProgressBar"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- KPI Cards Section -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        <h3>Métricas de Detección</h3>
+                    </div>
+
+                    <div class="kpi-grid">
+                        <div class="kpi-card total">
+                            <div class="kpi-val" id="kpiTotal">0</div>
+                            <div class="kpi-lbl">Árboles en Servidumbre (20m)</div>
+                        </div>
+                        <div class="kpi-card critical">
+                            <div class="kpi-val" id="kpiCritical">0</div>
+                            <div class="kpi-lbl">Críticos (&lt; 4m)</div>
+                        </div>
+                        <div class="kpi-card medium">
+                            <div class="kpi-val" id="kpiMedium">0</div>
+                            <div class="kpi-lbl">Riesgo Alto (4-7m)</div>
+                        </div>
+                        <div class="kpi-card safe">
+                            <div class="kpi-val" id="kpiSafe">0</div>
+                            <div class="kpi-lbl">Preventivos (7-10m)</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Risk Filter Section -->
+                <div class="panel-section">
+                    <div class="section-header">
+                        <i class="fa-solid fa-filter"></i>
+                        <h3>Filtrar por Nivel de Riesgo</h3>
+                    </div>
+                    <div class="filter-pills">
+                        <button class="filter-pill active" data-filter="all">Todos (<span id="countAll">0</span>)</button>
+                        <button class="filter-pill filter-crit" data-filter="CRITICO">Críticos (<span id="countCrit">0</span>)</button>
+                        <button class="filter-pill filter-med" data-filter="ALTO,MEDIO">Medios (<span id="countMed">0</span>)</button>
+                        <button class="filter-pill filter-safe" data-filter="BAJO">Preventivos (<span id="countLow">0</span>)</button>
+                    </div>
+                </div>
+
+                <!-- Tree Inventory Table -->
+                <div class="panel-section flex-grow">
+                    <div class="section-header justify-between">
+                        <div class="flex-align">
+                            <i class="fa-solid fa-list-check"></i>
+                            <h3>Inventario de Árboles</h3>
+                        </div>
+                        <span class="badge" id="tableRecordCount">0 registros</span>
+                    </div>
+
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Dist. Cable</th>
+                                    <th>Riesgo</th>
+                                    <th>Altura</th>
+                                    <th>Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody id="treeTableBody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Export Actions -->
+                <div class="export-actions">
+                    <button id="btnExportPDF" class="btn-primary" style="flex: 100%; margin-bottom: 4px; background: linear-gradient(135deg, #b71c1c, #e53935);">
+                        <i class="fa-solid fa-file-pdf"></i>
+                        <span>Generar Informe PDF (QuestPDF C#)</span>
+                    </button>
+                    <button id="btnExportCSV" class="btn-secondary">
+                        <i class="fa-solid fa-file-csv"></i>
+                        <span>Exportar CSV</span>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- Map Viewport -->
+            <main class="map-wrapper">
+                <div id="map"></div>
+
+                <!-- Orthophoto Opacity & Controls Bar -->
+                <div class="map-overlay-card orthophoto-toolbar">
+                    <div class="ortho-title">
+                        <i class="fa-solid fa-camera-retro"></i>
+                        <span>Ortofoto Dron:</span>
+                    </div>
+                    <div class="opacity-slider-wrap">
+                        <span>Opacidad:</span>
+                        <input type="range" id="orthoOpacitySlider" min="0.1" max="1.0" step="0.05" value="1.0">
+                        <span id="orthoOpacityVal">100%</span>
+                    </div>
+                </div>
+
+                <!-- Map Mode Layer Selector -->
+                <div class="map-overlay-card layer-switcher">
+                    <button class="layer-btn active" data-layer="orthophoto">
+                        <i class="fa-solid fa-satellite"></i> Ortofoto Dron HD
+                    </button>
+                    <button class="layer-btn" data-layer="dark">
+                        <i class="fa-solid fa-moon"></i> Carto Oscuro
+                    </button>
+                    <button class="layer-btn" data-layer="osm">
+                        <i class="fa-solid fa-map"></i> Topográfico
+                    </button>
+                </div>
+
+                <!-- Floating Map Controls / Legend -->
+                <div class="map-overlay-card map-legend">
+                    <h4><i class="fa-solid fa-layer-group"></i> Simbología de Servidumbre</h4>
+                    <div class="legend-item">
+                        <span class="legend-line line-kmz"></span>
+                        <span>Traza KMZ sobre Ortofoto (220kV)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-polygon corridor-20m"></span>
+                        <span>Franja de Servidumbre (<strong id="legendCorridorWidth">20m</strong>)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-icon tower-icon"><i class="fa-solid fa-tower-broadcast"></i></span>
+                        <span>Torres KMZ (T-01 a T-06)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-circle dot-critical"></span>
+                        <span>Árbol Crítico (&lt; 4m) - Tala/Poda Urgente</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-circle dot-medium"></span>
+                        <span>Árbol Medio (4-7m) - Poda Programada</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-circle dot-safe"></span>
+                        <span>Árbol Preventivo (7-10m) - Monitoreo</span>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Tree Detail Modal -->
+    <div class="modal-backdrop" id="treeModal" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <i class="fa-solid fa-tree modal-icon"></i>
+                    <div>
+                        <h3 id="modalTreeId">ARB-001</h3>
+                        <p id="modalTreeSpecies">Eucalipto (Eucalyptus globulus)</p>
+                    </div>
+                </div>
+                <button class="btn-close" id="btnCloseModal"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            
+            <div class="modal-body">
+                <div class="modal-grid">
+                    <div class="detail-item">
+                        <span class="detail-lbl">Distancia al Cable KMZ:</span>
+                        <strong class="detail-val highlight" id="modalTreeDist">2.4 m</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Nivel de Riesgo:</span>
+                        <strong class="detail-val" id="modalTreeRisk">CRÍTICO</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Altura Estimada:</span>
+                        <strong class="detail-val" id="modalTreeHeight">18.5 m</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Diámetro de Copa:</span>
+                        <strong class="detail-val" id="modalTreeCrown">6.2 m</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Coordenadas GPS:</span>
+                        <strong class="detail-val mono" id="modalTreeCoords">-33.435123, -70.647890</strong>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-lbl">Confianza IA:</span>
+                        <strong class="detail-val" id="modalTreeConf">96.8%</strong>
+                    </div>
+                </div>
+
+                <div class="action-box" id="modalActionBox">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    <div>
+                        <strong>Acción Recomendada:</strong>
+                        <p id="modalTreeAction">Programar brigada de tala/poda inmediata antes de energización.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="btn-primary" id="btnFocusMapFromModal">
+                    <i class="fa-solid fa-crosshairs"></i> Centrar en Mapa
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toastBox">
+        <i class="fa-solid fa-circle-check"></i>
+        <span id="toastMessage">Operación completada con éxito</span>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
