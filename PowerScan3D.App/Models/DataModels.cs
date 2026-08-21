@@ -6,6 +6,7 @@ public class TreeModel
     public double Latitude { get; set; }
     public double Longitude { get; set; }
     public double HeightM { get; set; }
+    public double AbsoluteElevationM { get; set; } // Z absoluto desde el nivel del mar
     public double CrownDiameterM { get; set; }
     public string Species { get; set; } = string.Empty;
     public double ConfidencePct { get; set; }

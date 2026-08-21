@@ -29,7 +29,10 @@ public class GisEngine
         if (lineSegments == null || !lineSegments.Any())
             return tree;
 
-        double minDistanceM = double.MaxValue;
+        double minDistance2D = double.MaxValue;
+        double minDistance3D = double.MaxValue;
+        double minClearanceV = double.MaxValue;
+        bool has3DData = false;
 
         foreach (var segment in lineSegments)
         {
@@ -38,10 +41,14 @@ public class GisEngine
             double refLat = segment[0].Y;
             double metersPerDegreeLon = 111320.0 * Math.Cos(refLat * Math.PI / 180.0);
 
-            var projectedCoords = segment.Select(c => new Coordinate(
-                c.X * metersPerDegreeLon,
-                c.Y * _metersPerDegreeLat
-            )).ToArray();
+            var projectedCoords = segment.Select(c => {
+                var coord = new Coordinate(
+                    c.X * metersPerDegreeLon,
+                    c.Y * _metersPerDegreeLat
+                );
+                coord.Z = double.IsNaN(c.Z) ? 0 : c.Z;
+                return coord;
+            }).ToArray();
 
             var lineString = _factory.CreateLineString(projectedCoords);
             var treePoint = _factory.CreatePoint(new Coordinate(
@@ -50,42 +57,108 @@ public class GisEngine
             ));
 
             double d = lineString.Distance(treePoint);
-            if (d < minDistanceM) minDistanceM = d;
+            
+            if (d < minDistance2D) 
+            {
+                minDistance2D = d;
+                
+                // Extraer el punto más cercano en la línea
+                var distOp = new NetTopologySuite.Operation.Distance.DistanceOp(lineString, treePoint);
+                var closestPts = distOp.NearestPoints();
+                var ptOnLine = closestPts[0];
+
+                // Interpolar Z en el segmento
+                double cableZ = 0;
+                for (int i = 0; i < projectedCoords.Length - 1; i++)
+                {
+                    var p1 = projectedCoords[i];
+                    var p2 = projectedCoords[i + 1];
+                    
+                    double segLen = p1.Distance(p2);
+                    double d1 = p1.Distance(ptOnLine);
+                    double d2 = p2.Distance(ptOnLine);
+                    
+                    if (Math.Abs((d1 + d2) - segLen) < 0.01) // El punto está en este segmento
+                    {
+                        double fraction = segLen > 0 ? d1 / segLen : 0;
+                        cableZ = p1.Z + fraction * (p2.Z - p1.Z);
+                        break;
+                    }
+                }
+
+                if (cableZ > 0 && tree.AbsoluteElevationM > 0)
+                {
+                    has3DData = true;
+                    double treeTopZ = tree.AbsoluteElevationM;
+                    double treeBaseZ = treeTopZ - tree.HeightM;
+                    
+                    minClearanceV = cableZ - treeTopZ;
+                    
+                    // Distancia 3D desde la BASE del árbol hasta el cable
+                    double dVertical = cableZ - treeBaseZ;
+                    minDistance3D = Math.Sqrt((d * d) + (dVertical * dVertical));
+                }
+            }
         }
 
-        if (minDistanceM == double.MaxValue) return tree;
+        if (minDistance2D == double.MaxValue) return tree;
 
-        tree.DistanceToCableM = Math.Round(minDistanceM, 2);
-        tree.IsInsideCorridor = minDistanceM <= halfWidth;
+        tree.DistanceToCableM = Math.Round(minDistance2D, 2);
+        tree.IsInsideCorridor = minDistance2D <= halfWidth;
 
-        if (tree.IsInsideCorridor)
+        if (has3DData)
         {
-            if (tree.HeightM > 3.0)
+            // MOTOR 3D: Análisis Geométrico
+            double radioCaida = tree.HeightM + (tree.CrownDiameterM / 2.0);
+
+            if (minDistance2D <= halfWidth && minClearanceV < 4.0)
             {
                 tree.RiskLevel = "CRITICO";
                 tree.RiskColor = "#ff3366";
-                tree.RecommendedAction = "Poda / Tala Inmediata (Peligro en servidumbre)";
+                tree.RecommendedAction = "Tala Inmediata (Riesgo Invasivo - Contacto inminente)";
             }
-            else
-            {
-                tree.RiskLevel = "MEDIO";
-                tree.RiskColor = "#ffcc00";
-                tree.RecommendedAction = "Notificar propietario (Matorral/Cerco vivo)";
-            }
-        }
-        else
-        {
-            if (tree.HeightM > minDistanceM)
+            else if (minDistance3D < radioCaida)
             {
                 tree.RiskLevel = "ALTO";
                 tree.RiskColor = "#ff9900";
-                tree.RecommendedAction = "Notificación a propietario (Riesgo de caída)";
+                tree.RecommendedAction = "Poda / Tala (Riesgo de Caída Cilíndrica sobre red)";
+            }
+            else if (tree.IsInsideCorridor)
+            {
+                tree.RiskLevel = "MEDIO";
+                tree.RiskColor = "#ffcc00";
+                tree.RecommendedAction = "Monitoreo (Dentro de faja, sin riesgo de caída)";
             }
             else
             {
                 tree.RiskLevel = "BAJO";
-                tree.RiskColor = "#78909c";
-                tree.RecommendedAction = "Fuera de peligro (Sin acción requerida)";
+                tree.RiskColor = "#00e676";
+                tree.RecommendedAction = "Seguro";
+            }
+        }
+        else
+        {
+            // Fallback 2D clásico
+            if (tree.IsInsideCorridor)
+            {
+                if (tree.HeightM > 3.0)
+                {
+                    tree.RiskLevel = "CRITICO";
+                    tree.RiskColor = "#ff3366";
+                    tree.RecommendedAction = "Poda / Tala Inmediata (Peligro en servidumbre 2D)";
+                }
+                else
+                {
+                    tree.RiskLevel = "MEDIO";
+                    tree.RiskColor = "#ffcc00";
+                    tree.RecommendedAction = "Notificar propietario (Matorral/Cerco vivo)";
+                }
+            }
+            else
+            {
+                tree.RiskLevel = "BAJO";
+                tree.RiskColor = "#00e676";
+                tree.RecommendedAction = "Fuera de servidumbre";
             }
         }
 

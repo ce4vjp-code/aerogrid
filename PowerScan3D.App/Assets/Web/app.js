@@ -395,7 +395,20 @@ function handlePhotogrammetryCompleted(data) {
     if (odmModal) odmModal.style.display = 'none';
     if (flightProgressBox) flightProgressBox.style.display = 'none';
 
-    showToast(data.message);
+    // Guardar rutas 3D
+    state.dsmPath = data.dsmPath;
+    state.dtmPath = data.dtmPath;
+
+    showToast("Mapas generados correctamente. Cargando ortofoto...");
+    
+    // Cargar automáticamente la ortofoto generada
+    if (data.tiffPath) {
+        window.chrome.webview.postMessage({
+            action: 'load_library_file',
+            file_path: data.tiffPath,
+            category: 'ortofotos_geotiff'
+        });
+    }
 }
 
 /**

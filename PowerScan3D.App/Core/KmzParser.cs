@@ -90,9 +90,16 @@ public class KmzParser
                 else if (!string.IsNullOrEmpty(idPoste)) name = $"Poste {idPoste}";
                 else if (!string.IsNullOrEmpty(etiqueta)) name = etiqueta;
                 else name = $"Elemento-{elemIdx}";
-            }
+            }            string description = pm.Elements().FirstOrDefault(e => e.Name.LocalName.Equals("description", StringComparison.OrdinalIgnoreCase))?.Value ?? "";
 
-            string description = pm.Elements().FirstOrDefault(e => e.Name.LocalName.Equals("description", StringComparison.OrdinalIgnoreCase))?.Value ?? "";
+            // Extraer Z del poste si existe
+            double pointZ = 12.0; // fallback de altura relativa
+            var simpleDatasZ = pm.Descendants().Where(e => e.Name.LocalName.Equals("SimpleData", StringComparison.OrdinalIgnoreCase)).ToList();
+            var altStr = simpleDatasZ.FirstOrDefault(s => (string?)s.Attribute("name") == "altura_sobre_nivel_mar")?.Value;
+            if (double.TryParse(altStr, NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedZ))
+            {
+                pointZ = parsedZ;
+            }
 
             // 1. Puntos (Postes / Torres)
             var pointElems = pm.Descendants().Where(e => e.Name.LocalName.Equals("Point", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -105,11 +112,13 @@ public class KmzParser
                     if (coords.Count > 0)
                     {
                         var c = coords[0];
+                        c.Z = pointZ; // Forzar la altitud real
+
                         features.Add(new
                         {
                             type = "Feature",
                             properties = new { name, description, geom_type = "Point" },
-                            geometry = new { type = "Point", coordinates = new[] { c.X, c.Y } }
+                            geometry = new { type = "Point", coordinates = new[] { c.X, c.Y, c.Z } }
                         });
 
                         result.Towers.Add(new TowerModel
@@ -118,7 +127,7 @@ public class KmzParser
                             Name = name,
                             Latitude = c.Y,
                             Longitude = c.X,
-                            HeightM = 12.0
+                            HeightM = c.Z
                         });
                         elemIdx++;
                     }
@@ -138,7 +147,7 @@ public class KmzParser
                         result.AllLineSegments.Add(coords);
                         result.LineCoordinates.AddRange(coords);
 
-                        var lineCoordsList = coords.Select(c => new[] { c.X, c.Y }).ToList();
+                        var lineCoordsList = coords.Select(c => new[] { c.X, c.Y, double.IsNaN(c.Z) ? 0 : c.Z }).ToList();
                         features.Add(new
                         {
                             type = "Feature",
@@ -196,6 +205,37 @@ public class KmzParser
             }
         }
 
+        // FASE 3: Reconstrucción Altitudinal (Cruzando Postes con Cables)
+        // Buscamos inyectar la coordenada Z a las líneas que son 2D.
+        if (merged.Towers.Count > 0 && merged.AllLineSegments.Count > 0)
+        {
+            double toleranceDegrees = 0.0001; // ~11 metros
+            
+            foreach (var segment in merged.AllLineSegments)
+            {
+                for (int i = 0; i < segment.Count; i++)
+                {
+                    var coord = segment[i];
+                    if (double.IsNaN(coord.Z) || coord.Z == 0) // Si no tiene Z o es 0
+                    {
+                        // Buscar el poste más cercano
+                        var closestTower = merged.Towers
+                            .OrderBy(t => Math.Pow(t.Longitude - coord.X, 2) + Math.Pow(t.Latitude - coord.Y, 2))
+                            .FirstOrDefault();
+
+                        if (closestTower != null)
+                        {
+                            double dist = Math.Sqrt(Math.Pow(closestTower.Longitude - coord.X, 2) + Math.Pow(closestTower.Latitude - coord.Y, 2));
+                            if (dist < toleranceDegrees)
+                            {
+                                coord.Z = closestTower.HeightM;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         merged.FeatureCount = allFeatures.Count;
         var featureCollection = new
         {
@@ -221,9 +261,17 @@ public class KmzParser
                 if (double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double lon) &&
                     double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double lat))
                 {
+                    double z = double.NaN;
+                    if (parts.Length >= 3 && double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double parsedZ))
+                    {
+                        z = parsedZ;
+                    }
+
                     if (Math.Abs(lat) <= 90 && Math.Abs(lon) <= 180)
                     {
-                        list.Add(new Coordinate(lon, lat));
+                        var c = new Coordinate(lon, lat);
+                        if (!double.IsNaN(z)) c.Z = z;
+                        list.Add(c);
                     }
                 }
             }

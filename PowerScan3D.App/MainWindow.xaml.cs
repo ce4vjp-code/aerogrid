@@ -25,6 +25,8 @@ public partial class MainWindow : Window
     // Estado GeoTIFF Real
     private GeoTiffMetadata? _currentTiffMeta = null;
     private string _currentTiffPath = string.Empty;
+    private string _currentDsmPath = string.Empty;
+    private string _currentDtmPath = string.Empty;
 
     public MainWindow()
     {
@@ -374,7 +376,7 @@ public partial class MainWindow : Window
     {
         var openFileDialog = new OpenFileDialog
         {
-            Title = "Seleccionar Ortofoto Georreferenciada (GeoTIFF)",
+            Title = "Seleccionar Ortofoto GeoTIFF",
             Filter = "Imágenes GeoTIFF (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
         };
 
@@ -396,6 +398,15 @@ public partial class MainWindow : Window
             _currentTiffPath = filePath;
             _currentTiffMeta = GeoTiffService.LoadGeoTiff(_currentTiffPath);
 
+            // Búsqueda inteligente de Modelos de Elevación 3D (DSM/DTM)
+            string dir = Path.GetDirectoryName(filePath) ?? "";
+            string baseName = Path.GetFileNameWithoutExtension(filePath).Replace("_Ortofoto_HD", "");
+            string possibleDsm = Path.Combine(dir, $"{baseName}_DSM.tif");
+            string possibleDtm = Path.Combine(dir, $"{baseName}_DTM.tif");
+            
+            _currentDsmPath = File.Exists(possibleDsm) ? possibleDsm : string.Empty;
+            _currentDtmPath = File.Exists(possibleDtm) ? possibleDtm : string.Empty;
+
             SendToJs("geotiff_loaded", new
             {
                 filename = _currentTiffMeta.FileName,
@@ -409,7 +420,9 @@ public partial class MainWindow : Window
                 width = _currentTiffMeta.Width,
                 height = _currentTiffMeta.Height,
                 image_base64 = _currentTiffMeta.ImageBase64,
-                debug_info = _currentTiffMeta.DebugInfo
+                debug_info = _currentTiffMeta.DebugInfo,
+                has_dsm = !string.IsNullOrEmpty(_currentDsmPath),
+                has_dtm = !string.IsNullOrEmpty(_currentDtmPath)
             });
 
             // Notificar catálogo actualizado de biblioteca
@@ -431,13 +444,15 @@ public partial class MainWindow : Window
                 _currentLineSegments = new List<List<Coordinate>> { mockCoords };
             }
 
-            // Detección real multi-espectral en la ortofoto
+            // Detección real multi-espectral en la ortofoto y extracción de altitud (Z) desde el DSM/DTM
             var realTrees = GeoTiffService.AnalyzeRealVegetation(
                 _currentTiffPath, 
                 _currentTiffMeta, 
                 _currentLineSegments, 
                 _currentCorridorWidthM,
-                sensitivity
+                sensitivity,
+                _currentDsmPath,
+                _currentDtmPath
             );
 
             if (realTrees.Any())
@@ -666,16 +681,25 @@ public partial class MainWindow : Window
                     }
                 }
 
-                SendToJs("photogrammetry_progress", new { percent = 95, stage = "DESCARGANDO", message = "Proceso completado. Descargando Ortofoto HD..." });
+                SendToJs("photogrammetry_progress", new { percent = 95, stage = "DESCARGANDO", message = "Proceso completado. Descargando Ortofoto, DSM y DTM..." });
                 
                 string libTiffDir = Path.Combine(LibraryService.GetLibraryRoot(), "ortofotos_geotiff");
                 Directory.CreateDirectory(libTiffDir);
-                string outputPath = Path.Combine(libTiffDir, $"{taskName}_Ortofoto_HD.tif");
+                string orthoPath = Path.Combine(libTiffDir, $"{taskName}_Ortofoto_HD.tif");
+                string dsmPath = Path.Combine(libTiffDir, $"{taskName}_DSM.tif");
+                string dtmPath = Path.Combine(libTiffDir, $"{taskName}_DTM.tif");
 
-                await client.DownloadOrthophotoAsync(uuid, outputPath);
+                await client.DownloadOrthophotoAsync(uuid, orthoPath);
+                
+                try {
+                    await client.DownloadDsmAsync(uuid, dsmPath);
+                    await client.DownloadDtmAsync(uuid, dtmPath);
+                } catch (Exception ex) {
+                    Console.WriteLine($"Error descargando DEMs: {ex.Message}");
+                }
 
-                SendToJs("photogrammetry_progress", new { percent = 100, stage = "COMPLETADO", message = "Ortofoto guardada en la biblioteca." });
-                SendToJs("photogrammetry_completed", new { tiffPath = outputPath });
+                SendToJs("photogrammetry_progress", new { percent = 100, stage = "COMPLETADO", message = "Mapas 3D guardados en la biblioteca." });
+                SendToJs("photogrammetry_completed", new { tiffPath = orthoPath, dsmPath = dsmPath, dtmPath = dtmPath });
             }
             catch (Exception ex)
             {

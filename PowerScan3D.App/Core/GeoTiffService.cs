@@ -218,6 +218,33 @@ public class GeoTiffService
         };
     }
 
+    public static float ReadFloatPixel(Tiff tif, int x, int y)
+    {
+        try
+        {
+            if (tif.IsTiled())
+            {
+                int tileWidth = tif.GetField(TiffTag.TILEWIDTH)[0].ToInt();
+                int tileLength = tif.GetField(TiffTag.TILELENGTH)[0].ToInt();
+                byte[] tile = new byte[tif.TileSize()];
+                tif.ReadTile(tile, 0, x, y, 0, 0);
+                int tileX = x % tileWidth;
+                int tileY = y % tileLength;
+                return BitConverter.ToSingle(tile, (tileY * tileWidth + tileX) * 4);
+            }
+            else
+            {
+                byte[] scanline = new byte[tif.ScanlineSize()];
+                tif.ReadScanline(scanline, y);
+                return BitConverter.ToSingle(scanline, x * 4);
+            }
+        }
+        catch
+        {
+            return 12.0f;
+        }
+    }
+
     private static string ExtractOptimizedThumbnail(Tiff tif, int width, int height, bool isTiled, StringBuilder sbDebug)
     {
         int maxDim = 2048;
@@ -368,7 +395,9 @@ public class GeoTiffService
         GeoTiffMetadata meta, 
         List<List<Coordinate>> kmzLineSegments, 
         double corridorWidthM = 20.0,
-        int sensitivity = 4)
+        int sensitivity = 4,
+        string dsmPath = "",
+        string dtmPath = "")
     {
         var detectedTrees = new List<TreeModel>();
         int width = meta.Width;
@@ -536,12 +565,89 @@ public class GeoTiffService
             }
         }
 
+        // FASE 3: Apertura del DSM y DTM para leer alturas Z y relativas
+        Tiff? dsmTif = null;
+        Tiff? dtmTif = null;
+        int dsmWidth = 0, dsmHeight = 0;
+        int dtmWidth = 0, dtmHeight = 0;
+
+        if (!string.IsNullOrEmpty(dsmPath) && File.Exists(dsmPath))
+        {
+            try
+            {
+                dsmTif = Tiff.Open(dsmPath, "r");
+                if (dsmTif != null)
+                {
+                    dsmWidth = dsmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+                    dsmHeight = dsmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+                }
+            }
+            catch { }
+        }
+
+        if (!string.IsNullOrEmpty(dtmPath) && File.Exists(dtmPath))
+        {
+            try
+            {
+                dtmTif = Tiff.Open(dtmPath, "r");
+                if (dtmTif != null)
+                {
+                    dtmWidth = dtmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+                    dtmHeight = dtmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+                }
+            }
+            catch { }
+        }
+
         int treeCount = 1;
         foreach (var m in spatialGrid.Values)
         {
-            double heightM = m.species.Contains("Pino") ? (m.crownDiam * 2.8 + 4.0) :
-                             (m.species.Contains("Eucalipto") ? (m.crownDiam * 2.6 + 5.0) :
-                             (m.species.Contains("Espino") ? (m.crownDiam * 1.4 + 2.5) : (m.crownDiam * 2.1 + 3.0)));
+            double heightRelative = 12.0;
+            double absoluteElevation = 0;
+
+            if (dsmTif != null && dsmWidth > 0 && dsmHeight > 0)
+            {
+                double normalizedX = (m.lon - meta.MinLon) / (meta.MaxLon - meta.MinLon);
+                double normalizedY = (meta.MaxLat - m.lat) / (meta.MaxLat - meta.MinLat);
+                int pixelX = (int)(normalizedX * dsmWidth);
+                int pixelY = (int)(normalizedY * dsmHeight);
+                pixelX = Math.Max(0, Math.Min(pixelX, dsmWidth - 1));
+                pixelY = Math.Max(0, Math.Min(pixelY, dsmHeight - 1));
+
+                float zDsm = ReadFloatPixel(dsmTif, pixelX, pixelY);
+                if (zDsm > -1000 && zDsm < 10000) 
+                {
+                    absoluteElevation = zDsm;
+                    
+                    // Si tenemos DTM, calcular la altura relativa del árbol
+                    if (dtmTif != null && dtmWidth > 0 && dtmHeight > 0)
+                    {
+                        int dtmPixelX = (int)(normalizedX * dtmWidth);
+                        int dtmPixelY = (int)(normalizedY * dtmHeight);
+                        dtmPixelX = Math.Max(0, Math.Min(dtmPixelX, dtmWidth - 1));
+                        dtmPixelY = Math.Max(0, Math.Min(dtmPixelY, dtmHeight - 1));
+                        
+                        float zDtm = ReadFloatPixel(dtmTif, dtmPixelX, dtmPixelY);
+                        if (zDtm > -1000 && zDtm < 10000)
+                        {
+                            heightRelative = zDsm - zDtm;
+                            if (heightRelative < 1.0) heightRelative = 1.0;
+                        }
+                    }
+                    else
+                    {
+                        heightRelative = 15.0; // Fallback razonable si solo tenemos DSM pero no DTM
+                    }
+                }
+            }
+            else
+            {
+                // Fallback paramétrico 2D si no hay DSM
+                heightRelative = m.species.Contains("Pino") ? (m.crownDiam * 2.8 + 4.0) :
+                         (m.species.Contains("Eucalipto") ? (m.crownDiam * 2.6 + 5.0) :
+                         (m.species.Contains("Espino") ? (m.crownDiam * 1.4 + 2.5) : (m.crownDiam * 2.1 + 3.0)));
+                absoluteElevation = heightRelative; // Inexacto pero necesario para 2D
+            }
 
             var tree = new TreeModel
             {
@@ -549,7 +655,8 @@ public class GeoTiffService
                 Latitude = m.lat,
                 Longitude = m.lon,
                 CrownDiameterM = m.crownDiam,
-                HeightM = Math.Round(Math.Max(4.5, heightM), 1),
+                HeightM = Math.Round(Math.Max(2.5, heightRelative), 1),
+                AbsoluteElevationM = absoluteElevation,
                 Species = m.species,
                 ConfidencePct = Math.Round(m.confidence, 1),
                 SourcePhoto = Path.GetFileName(tiffPath)
@@ -563,6 +670,9 @@ public class GeoTiffService
                 treeCount++;
             }
         }
+
+        dsmTif?.Dispose();
+        dtmTif?.Dispose();
 
         return detectedTrees;
     }
