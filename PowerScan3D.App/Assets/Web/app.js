@@ -1585,3 +1585,4 @@ function updateHeatmap() {
         }
     }).addTo(state.map);
 }
+

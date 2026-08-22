@@ -42,12 +42,12 @@ public class GisEngine
             double metersPerDegreeLon = 111320.0 * Math.Cos(refLat * Math.PI / 180.0);
 
             var projectedCoords = segment.Select(c => {
-                var coord = new Coordinate(
+                double zVal = double.IsNaN(c.Z) ? 0 : c.Z;
+                return new CoordinateZ(
                     c.X * metersPerDegreeLon,
-                    c.Y * _metersPerDegreeLat
+                    c.Y * _metersPerDegreeLat,
+                    zVal
                 );
-                coord.Z = double.IsNaN(c.Z) ? 0 : c.Z;
-                return coord;
             }).ToArray();
 
             var lineString = _factory.CreateLineString(projectedCoords);

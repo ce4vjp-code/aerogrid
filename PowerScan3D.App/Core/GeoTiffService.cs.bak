@@ -400,135 +400,282 @@ public class GeoTiffService
         string dtmPath = "")
     {
         var detectedTrees = new List<TreeModel>();
-        var gisEngine = new GisEngine(corridorWidthM);
+        int width = meta.Width;
+        int height = meta.Height;
+        int[] raster = new int[width * height];
+        bool loadedRaster = false;
 
-        try
+        if (File.Exists(tiffPath))
         {
-            // 1. Convert NTS Coordinates to Python Coordinates
-            var pythonCoords = new List<List<object>>();
-            if (kmzLineSegments != null)
+            string ext = Path.GetExtension(tiffPath).ToLowerInvariant();
+            if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
             {
-                foreach (var segment in kmzLineSegments)
+                using var stream = File.OpenRead(tiffPath);
+                using var bmp = SKBitmap.Decode(stream);
+                if (bmp != null)
                 {
-                    var pySeg = new List<object>();
-                    foreach (var c in segment)
+                    var pixels = bmp.Pixels;
+                    for (int i = 0; i < pixels.Length && i < raster.Length; i++)
                     {
-                        pySeg.Add(new { Latitude = c.Y, Longitude = c.X, Altitude = c.Z });
+                        var p = pixels[i];
+                        raster[i] = (int)(((uint)p.Alpha << 24) | ((uint)p.Blue << 16) | ((uint)p.Green << 8) | (uint)p.Red);
                     }
-                    pythonCoords.Add(pySeg);
+                    loadedRaster = true;
                 }
             }
-
-            // 2. Build JSON Payload for FastAPI
-            var payload = new
+            else
             {
-                orthophoto_path = tiffPath,
-                dsm_path = dsmPath,
-                corridor_width_m = corridorWidthM,
-                kmz_lines = pythonCoords
-            };
-
-            string jsonPayload = System.Text.Json.JsonSerializer.Serialize(payload);
-            using var client = new System.Net.Http.HttpClient();
-            client.Timeout = TimeSpan.FromMinutes(60);
-            
-            var content = new System.Net.Http.StringContent(jsonPayload, System.Text.Encoding.UTF8, "application/json");
-            var response = client.PostAsync("http://localhost:8000/analyze", content).Result;
-            response.EnsureSuccessStatusCode();
-
-            string resultJson = response.Content.ReadAsStringAsync().Result; System.IO.File.WriteAllText(@"C:\Users\Cristian\Downloads\aerogrid\PowerScan3D.App\ai_response_debug.json", resultJson);
-            using var doc = System.Text.Json.JsonDocument.Parse(resultJson);
-            
-            var treesArray = doc.RootElement.GetProperty("trees");
-            
-            // 3. Extract DSM Data natively in C# for precision
-            int[] dsmRaster = null;
-            int dsmW = 0, dsmH = 0;
-            double dsmLat = 0, dsmLon = 0, dsmDlat = 0, dsmDlon = 0;
-            if (!string.IsNullOrEmpty(dsmPath) && File.Exists(dsmPath))
-            {
-                using var dsmTif = Tiff.Open(dsmPath, "r");
-                if (dsmTif != null)
+                using Tiff tif = Tiff.Open(tiffPath, "r");
+                if (tif != null)
                 {
-                    dsmW = dsmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
-                    dsmH = dsmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
-                    dsmRaster = new int[dsmW * dsmH];
-                    dsmTif.ReadRGBAImageOriented(dsmW, dsmH, dsmRaster, Orientation.TOPLEFT);
-                    
-                    var modelTiepoint = dsmTif.GetField((TiffTag)33922);
-                    var modelPixelScale = dsmTif.GetField((TiffTag)33550);
-                    if (modelTiepoint != null && modelPixelScale != null)
-                    {
-                        double[] tp = modelTiepoint[1].ToDoubleArray();
-                        double[] ps = modelPixelScale[1].ToDoubleArray();
-                        dsmLon = tp[3];
-                        dsmLat = tp[4];
-                        dsmDlon = ps[0];
-                        dsmDlat = ps[1];
-                    }
+                    loadedRaster = tif.ReadRGBAImageOriented(width, height, raster, Orientation.TOPLEFT);
                 }
             }
+        }
 
-            double minConfidence = sensitivity >= 8 ? 10.0 : (sensitivity >= 4 ? 25.0 : 50.0);
+        if (!loadedRaster) return detectedTrees;
 
-            // 4. Parse AI Trees and Assign Height
-            foreach (var tElem in treesArray.EnumerateArray())
+        var gisEngine = new GisEngine(corridorWidthM);
+        double dLat = meta.MaxLat - meta.MinLat;
+        double dLon = meta.MaxLon - meta.MinLon;
+
+        // 1. Calcular Bounding Box del KMZ para acotar la búsqueda
+        double kmzMinLat = meta.MinLat, kmzMaxLat = meta.MaxLat;
+        double kmzMinLon = meta.MinLon, kmzMaxLon = meta.MaxLon;
+
+        var allCoords = kmzLineSegments != null ? kmzLineSegments.SelectMany(s => s).ToList() : new List<Coordinate>();
+        if (allCoords.Count > 0)
+        {
+            double bufferDegrees = (corridorWidthM * 1.5) / 111320.0;
+            kmzMinLat = allCoords.Min(c => c.Y) - bufferDegrees;
+            kmzMaxLat = allCoords.Max(c => c.Y) + bufferDegrees;
+            kmzMinLon = allCoords.Min(c => c.X) - bufferDegrees;
+            kmzMaxLon = allCoords.Max(c => c.X) + bufferDegrees;
+        }
+
+        // Convertir Bounding Box geográfico a rango de píxeles (Ymin, Ymax, Xmin, Xmax)
+        int startY = Math.Max(2, (int)(((meta.MaxLat - kmzMaxLat) / dLat) * height));
+        int endY = Math.Min(height - 2, (int)(((meta.MaxLat - kmzMinLat) / dLat) * height));
+        int startX = Math.Max(2, (int)(((kmzMinLon - meta.MinLon) / dLon) * width));
+        int endX = Math.Min(width - 2, (int)(((kmzMaxLon - meta.MinLon) / dLon) * width));
+
+        // Si el KMZ y la foto no se intersectan en coordenadas, escanear toda la foto
+        if (startY >= endY || startX >= endX)
+        {
+            startY = 2; endY = height - 2;
+            startX = 2; endX = width - 2;
+        }
+
+        // Paso de muestreo adaptativo (~1 metro por píxel de análisis)
+        int step = Math.Max(2, (int)(1.0 / Math.Max(0.01, meta.GsdMeters)));
+
+        int exgThreshold = 16 - (sensitivity * 3);
+        int minGreenVal = 24 - (sensitivity * 2);
+
+        // Spatial Hash Grid (Celdas de 3 metros) para fusión O(1) instantánea
+        double cellSizeM = 3.2;
+        var spatialGrid = new Dictionary<(int, int), (double lat, double lon, double crownDiam, double score, string species, double confidence)>();
+
+        for (int y = startY; y < endY; y += step)
+        {
+            double lat = meta.MaxLat - ((double)y / height) * dLat;
+            int rowOffset = y * width;
+
+            for (int x = startX; x < endX; x += step)
             {
-                double lat = tElem.GetProperty("lat").GetDouble();
-                double lon = tElem.GetProperty("lon").GetDouble();
-                double diam = tElem.GetProperty("crownDiam").GetDouble();
-                double conf = tElem.GetProperty("confidence").GetDouble() * 100.0;
-                string species = tElem.TryGetProperty("species", out var s) ? s.GetString() : "Desconocida";
+                double lon = meta.MinLon + ((double)x / width) * dLon;
 
-                double heightM = 2.5; // Default fallback
-                double absElev = 0.0;
+                int pixel = raster[rowOffset + x];
+                int r = Tiff.GetR(pixel);
+                int g = Tiff.GetG(pixel);
+                int b = Tiff.GetB(pixel);
+                int a = Tiff.GetA(pixel);
 
-                // DSM Height extraction logic
-                if (dsmRaster != null && dsmDlat != 0)
+                if (a == 0 || (r < 5 && g < 5 && b < 5) || (r > 245 && g > 245 && b > 245))
+                    continue;
+
+                int exG = (2 * g) - r - b;
+                double vari = (g + r - b) > 0 ? (double)(g - r) / (g + r - b + 1) : 0;
+
+                bool isTree = false;
+                string speciesName = "Vegetación Nativa";
+                double confidence = 85.0;
+
+                // Eucalipto
+                if (g > 65 && g > r + 6 && exG >= exgThreshold)
                 {
-                    int px = (int)((lon - dsmLon) / dsmDlon);
-                    int py = (int)((dsmLat - lat) / dsmDlat);
-                    if (px >= 0 && px < dsmW && py >= 0 && py < dsmH)
+                    isTree = true;
+                    speciesName = "Eucalipto (Eucalyptus globulus)";
+                    confidence = Math.Min(96.5, 86.0 + (exG * 0.35));
+                }
+                // Pino Radiata
+                else if (g >= 22 && g > r && g >= b - 2 && r < 55 && (exG >= (exgThreshold - 4) || g > r + 2))
+                {
+                    isTree = true;
+                    speciesName = "Pino Radiata (Pinus radiata)";
+                    confidence = Math.Min(95.0, 84.0 + ((g - r) * 0.5));
+                }
+                // Espino / Matorral Nativo
+                else if (exG >= exgThreshold && g >= minGreenVal)
+                {
+                    isTree = true;
+                    speciesName = (g < 50 && r > 40) ? "Espino / Acacia Caven (Nativo)" : "Matorral / Vegetación Densa";
+                    confidence = Math.Min(93.0, 82.0 + (vari * 40.0));
+                }
+                // Álamo
+                else if (g > 80 && r > 60 && g > r + 10)
+                {
+                    isTree = true;
+                    speciesName = "Álamo (Populus nigra)";
+                    confidence = 94.0;
+                }
+
+                if (isTree)
+                {
+                    int gridX = (int)(lon * 111320.0 / cellSizeM);
+                    int gridY = (int)(lat * 111320.0 / cellSizeM);
+                    var gridKey = (gridX, gridY);
+
+                    double crownDiamM = Math.Round(Math.Max(2.5, 3 * 2.0 * meta.GsdMeters * 1.5), 1);
+                    double score = Math.Max(exG, (int)(vari * 50.0));
+
+                    // Si ya existe un punto en esta celda o celdas adyacentes, mantener el de mayor puntuación
+                    bool existsNear = false;
+                    for (int dx = -1; dx <= 1 && !existsNear; dx++)
                     {
-                        int pixel = dsmRaster[py * dsmW + px];
-                        int r = Tiff.GetR(pixel);
-                        int g = Tiff.GetG(pixel);
-                        int b = Tiff.GetB(pixel);
-                        double z = (r * 256.0 * 256.0 + g * 256.0 + b) / 1000.0 - 100.0;
-                        if (z > 0 && z < 100) 
+                        for (int dy = -1; dy <= 1; dy++)
                         {
-                            absElev = z;
-                            // Estimate relative height using a fake DTM assumption or standard offset
-                            heightM = Math.Max(2.5, z * 0.15); // VERY naive relative height since we don't subtract DTM
+                            if (spatialGrid.TryGetValue((gridX + dx, gridY + dy), out var existing))
+                            {
+                                existsNear = true;
+                                if (score > existing.score)
+                                {
+                                    spatialGrid[(gridX + dx, gridY + dy)] = (lat, lon, crownDiamM, score, speciesName, confidence);
+                                }
+                                break;
+                            }
                         }
                     }
-                }
 
-                var tree = new TreeModel
-                {
-                    Id = $"AI-ARB-{detectedTrees.Count + 1:D3}",
-                    Latitude = lat,
-                    Longitude = lon,
-                    CrownDiameterM = diam,
-                    HeightM = Math.Round(heightM, 1),
-                    AbsoluteElevationM = absElev,
-                    Species = species,
-                    ConfidencePct = Math.Round(conf, 1),
-                    SourcePhoto = Path.GetFileName(tiffPath)
-                };
-
-                gisEngine.AnalyzeTreeMultiSegment(tree, kmzLineSegments, corridorWidthM);
-
-                if (tree.DistanceToCableM <= (corridorWidthM * 1.35) && tree.ConfidencePct >= minConfidence)
-                {
-                    detectedTrees.Add(tree);
+                    if (!existsNear)
+                    {
+                        spatialGrid[gridKey] = (lat, lon, crownDiamM, score, speciesName, confidence);
+                    }
                 }
             }
         }
-        catch (Exception ex)
+
+        // FASE 3: Apertura del DSM y DTM para leer alturas Z y relativas
+        Tiff? dsmTif = null;
+        Tiff? dtmTif = null;
+        int dsmWidth = 0, dsmHeight = 0;
+        int dtmWidth = 0, dtmHeight = 0;
+
+        if (!string.IsNullOrEmpty(dsmPath) && File.Exists(dsmPath))
         {
-            System.IO.File.WriteAllText(@"C:\Users\Cristian\Downloads\aerogrid\PowerScan3D.App\error_log.txt", ex.ToString()); return null;
+            try
+            {
+                dsmTif = Tiff.Open(dsmPath, "r");
+                if (dsmTif != null)
+                {
+                    dsmWidth = dsmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+                    dsmHeight = dsmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+                }
+            }
+            catch { }
         }
+
+        if (!string.IsNullOrEmpty(dtmPath) && File.Exists(dtmPath))
+        {
+            try
+            {
+                dtmTif = Tiff.Open(dtmPath, "r");
+                if (dtmTif != null)
+                {
+                    dtmWidth = dtmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+                    dtmHeight = dtmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+                }
+            }
+            catch { }
+        }
+
+        int treeCount = 1;
+        foreach (var m in spatialGrid.Values)
+        {
+            double heightRelative = 12.0;
+            double absoluteElevation = 0;
+
+            if (dsmTif != null && dsmWidth > 0 && dsmHeight > 0)
+            {
+                double normalizedX = (m.lon - meta.MinLon) / (meta.MaxLon - meta.MinLon);
+                double normalizedY = (meta.MaxLat - m.lat) / (meta.MaxLat - meta.MinLat);
+                int pixelX = (int)(normalizedX * dsmWidth);
+                int pixelY = (int)(normalizedY * dsmHeight);
+                pixelX = Math.Max(0, Math.Min(pixelX, dsmWidth - 1));
+                pixelY = Math.Max(0, Math.Min(pixelY, dsmHeight - 1));
+
+                float zDsm = ReadFloatPixel(dsmTif, pixelX, pixelY);
+                if (zDsm > -1000 && zDsm < 10000) 
+                {
+                    absoluteElevation = zDsm;
+                    
+                    // Si tenemos DTM, calcular la altura relativa del árbol
+                    if (dtmTif != null && dtmWidth > 0 && dtmHeight > 0)
+                    {
+                        int dtmPixelX = (int)(normalizedX * dtmWidth);
+                        int dtmPixelY = (int)(normalizedY * dtmHeight);
+                        dtmPixelX = Math.Max(0, Math.Min(dtmPixelX, dtmWidth - 1));
+                        dtmPixelY = Math.Max(0, Math.Min(dtmPixelY, dtmHeight - 1));
+                        
+                        float zDtm = ReadFloatPixel(dtmTif, dtmPixelX, dtmPixelY);
+                        if (zDtm > -1000 && zDtm < 10000)
+                        {
+                            heightRelative = zDsm - zDtm;
+                            if (heightRelative < 1.0) heightRelative = 1.0;
+                        }
+                    }
+                    else
+                    {
+                        heightRelative = 15.0; // Fallback razonable si solo tenemos DSM pero no DTM
+                    }
+                }
+            }
+            else
+            {
+                // Fallback paramétrico 2D si no hay DSM
+                heightRelative = m.species.Contains("Pino") ? (m.crownDiam * 2.8 + 4.0) :
+                         (m.species.Contains("Eucalipto") ? (m.crownDiam * 2.6 + 5.0) :
+                         (m.species.Contains("Espino") ? (m.crownDiam * 1.4 + 2.5) : (m.crownDiam * 2.1 + 3.0)));
+                absoluteElevation = heightRelative; // Inexacto pero necesario para 2D
+            }
+
+            var tree = new TreeModel
+            {
+                Id = $"ARB-{treeCount:D3}",
+                Latitude = m.lat,
+                Longitude = m.lon,
+                CrownDiameterM = m.crownDiam,
+                HeightM = Math.Round(Math.Max(2.5, heightRelative), 1),
+                AbsoluteElevationM = absoluteElevation,
+                Species = m.species,
+                ConfidencePct = Math.Round(m.confidence, 1),
+                SourcePhoto = Path.GetFileName(tiffPath)
+            };
+
+            gisEngine.AnalyzeTreeMultiSegment(tree, kmzLineSegments, corridorWidthM);
+
+            // Sensitivity logic
+            double minConfidence = sensitivity >= 8 ? 10.0 : (sensitivity >= 4 ? 25.0 : 50.0);
+
+            if (tree.DistanceToCableM <= (corridorWidthM * 1.35) && tree.ConfidencePct >= minConfidence)
+            {
+                detectedTrees.Add(tree);
+                treeCount++;
+            }
+        }
+
+        dsmTif?.Dispose();
+        dtmTif?.Dispose();
 
         return detectedTrees;
     }
@@ -573,7 +720,3 @@ public class GeoTiffService
         return (latDeg, lonDeg);
     }
 }
-
-
-
-

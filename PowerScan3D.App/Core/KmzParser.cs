@@ -111,8 +111,7 @@ public class KmzParser
                     var coords = ParseCoordinatesBlock(coordsElem.Value);
                     if (coords.Count > 0)
                     {
-                        var c = coords[0];
-                        c.Z = pointZ; // Forzar la altitud real
+                        var c = new CoordinateZ(coords[0].X, coords[0].Y, pointZ);
 
                         features.Add(new
                         {
@@ -228,7 +227,7 @@ public class KmzParser
                             double dist = Math.Sqrt(Math.Pow(closestTower.Longitude - coord.X, 2) + Math.Pow(closestTower.Latitude - coord.Y, 2));
                             if (dist < toleranceDegrees)
                             {
-                                coord.Z = closestTower.HeightM;
+                                segment[i] = new CoordinateZ(coord.X, coord.Y, closestTower.HeightM);
                             }
                         }
                     }
@@ -269,8 +268,7 @@ public class KmzParser
 
                     if (Math.Abs(lat) <= 90 && Math.Abs(lon) <= 180)
                     {
-                        var c = new Coordinate(lon, lat);
-                        if (!double.IsNaN(z)) c.Z = z;
+                        var c = !double.IsNaN(z) ? new CoordinateZ(lon, lat, z) : new Coordinate(lon, lat);
                         list.Add(c);
                     }
                 }

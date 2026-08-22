@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -59,7 +59,7 @@ public partial class MainWindow : Window
             }
             else
             {
-                MessageBox.Show($"No se encontró la carpeta de recursos web en: {webAssetsDir}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"No se encontrÃ³ la carpeta de recursos web en: {webAssetsDir}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
 
             webView.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
@@ -308,7 +308,7 @@ public partial class MainWindow : Window
 
             var corridorPolygons = _gisEngine.GenerateMultiCorridorPolygons(_currentLineSegments, _currentCorridorWidthM);
 
-            // Reevaluar árboles existentes sobre los tramos reales
+            // Reevaluar Ã¡rboles existentes sobre los tramos reales
             if (_currentLineSegments.Any())
             {
                 foreach (var t in _currentTrees)
@@ -330,7 +330,7 @@ public partial class MainWindow : Window
                 trees = _currentTrees
             });
 
-            // Notificar catálogo actualizado de biblioteca
+            // Notificar catÃ¡logo actualizado de biblioteca
             SendToJs("library_catalog_updated", LibraryService.GetCatalog());
         }
         catch (Exception ex)
@@ -377,7 +377,7 @@ public partial class MainWindow : Window
         var openFileDialog = new OpenFileDialog
         {
             Title = "Seleccionar Ortofoto GeoTIFF",
-            Filter = "Imágenes GeoTIFF (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
+            Filter = "ImÃ¡genes GeoTIFF (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
         };
 
         if (openFileDialog.ShowDialog() == true)
@@ -398,7 +398,7 @@ public partial class MainWindow : Window
             _currentTiffPath = filePath;
             _currentTiffMeta = GeoTiffService.LoadGeoTiff(_currentTiffPath);
 
-            // Búsqueda inteligente de Modelos de Elevación 3D (DSM/DTM)
+            // BÃºsqueda inteligente de Modelos de ElevaciÃ³n 3D (DSM/DTM)
             string dir = Path.GetDirectoryName(filePath) ?? "";
             string baseName = Path.GetFileNameWithoutExtension(filePath).Replace("_Ortofoto_HD", "");
             string possibleDsm = Path.Combine(dir, $"{baseName}_DSM.tif");
@@ -425,7 +425,7 @@ public partial class MainWindow : Window
                 has_dtm = !string.IsNullOrEmpty(_currentDtmPath)
             });
 
-            // Notificar catálogo actualizado de biblioteca
+            // Notificar catÃ¡logo actualizado de biblioteca
             SendToJs("library_catalog_updated", LibraryService.GetCatalog());
         }
         catch (Exception ex)
@@ -436,57 +436,40 @@ public partial class MainWindow : Window
 
     private void HandleRunRealAnalysis(int sensitivity = 3)
     {
-        if (_currentTiffMeta != null && File.Exists(_currentTiffPath))
+        if (_currentTiffMeta == null || !File.Exists(_currentTiffPath))
         {
-            if (_currentLineSegments == null || _currentLineSegments.Count == 0)
-            {
-                var mockCoords = MockDataService.GetMissionCoordinates(_currentMission);
-                _currentLineSegments = new List<List<Coordinate>> { mockCoords };
-            }
-
-            // Detección real multi-espectral en la ortofoto y extracción de altitud (Z) desde el DSM/DTM
-            var realTrees = GeoTiffService.AnalyzeRealVegetation(
-                _currentTiffPath, 
-                _currentTiffMeta, 
-                _currentLineSegments, 
-                _currentCorridorWidthM,
-                sensitivity,
-                _currentDsmPath,
-                _currentDtmPath
-            );
-
-            if (realTrees.Any())
-            {
-                _currentTrees = realTrees;
-            }
-
-            var corridorPolygon = _gisEngine.GenerateCorridorPolygon(_currentLineCoords, _currentCorridorWidthM);
-
-            SendToJs("real_analysis_completed", new
-            {
-                trees = _currentTrees,
-                corridor_polygon = corridorPolygon,
-                corridor_width_m = _currentCorridorWidthM,
-                count = _currentTrees.Count
-            });
+            SendToJs("error", new { message = "Debes cargar una ortofoto (.tif) para realizar el Análisis Real." });
+            return;
         }
-        else
+
+        if (_currentLineSegments == null || _currentLineSegments.Count == 0)
         {
-            // Ejecución sobre la misión actual
-            if (_currentLineCoords.Count < 2)
-                _currentLineCoords = MockDataService.GetMissionCoordinates(_currentMission);
-
-            _currentTrees = MockDataService.GenerateTrees(_currentMission, _currentCorridorWidthM);
-            var corridorPolygon = _gisEngine.GenerateCorridorPolygon(_currentLineCoords, _currentCorridorWidthM);
-
-            SendToJs("real_analysis_completed", new
-            {
-                trees = _currentTrees,
-                corridor_polygon = corridorPolygon,
-                corridor_width_m = _currentCorridorWidthM,
-                count = _currentTrees.Count
-            });
+            SendToJs("error", new { message = "Debes cargar un archivo de red (KMZ/KML) para acotar la búsqueda." });
+            return;
         }
+
+        // Detección real multi-espectral y extracción de altitud (Z) desde el DSM/DTM
+        var realTrees = GeoTiffService.AnalyzeRealVegetation(
+            _currentTiffPath, 
+            _currentTiffMeta, 
+            _currentLineSegments, 
+            _currentCorridorWidthM,
+            sensitivity,
+            _currentDsmPath,
+            _currentDtmPath
+        );
+
+        if (realTrees == null) { SendToJs("error", new { message = "Error interno o timeout al conectar con la Inteligencia Artificial (Powerscan_AI). El análisis se canceló." }); return; } else if (realTrees.Any()) { _currentTrees = realTrees; } else { _currentTrees.Clear(); }
+
+        var corridorPolygon = _gisEngine.GenerateMultiCorridorPolygons(_currentLineSegments, _currentCorridorWidthM);
+
+        SendToJs("real_analysis_completed", new
+        {
+            trees = _currentTrees,
+            corridor_polygon = corridorPolygon,
+            corridor_width_m = _currentCorridorWidthM,
+            count = _currentTrees.Count
+        });
     }
 
     private void HandleExportPdf()
@@ -500,7 +483,7 @@ public partial class MainWindow : Window
 
         PdfReportService.GenerateReport(_currentMission, _currentTrees, _currentCorridorWidthM, fullPath);
 
-        SendToJs("toast", new { message = $"Informe PDF generado con éxito en C#: {filename}" });
+        SendToJs("toast", new { message = $"Informe PDF generado con Ã©xito en C#: {filename}" });
 
         if (File.Exists(fullPath))
         {
@@ -546,8 +529,8 @@ public partial class MainWindow : Window
     {
         var openFileDialog = new OpenFileDialog
         {
-            Title = "Seleccionar Archivo de Telemetría o Disparos de Dron (.MRK, .CSV, .TXT)",
-            Filter = "Archivos de Disparo / Telemetría (*.MRK;*.csv;*.txt)|*.MRK;*.csv;*.txt|Todos los archivos (*.*)|*.*"
+            Title = "Seleccionar Archivo de TelemetrÃ­a o Disparos de Dron (.MRK, .CSV, .TXT)",
+            Filter = "Archivos de Disparo / TelemetrÃ­a (*.MRK;*.csv;*.txt)|*.MRK;*.csv;*.txt|Todos los archivos (*.*)|*.*"
         };
 
         if (openFileDialog.ShowDialog() == true)
@@ -566,7 +549,7 @@ public partial class MainWindow : Window
 
         if (!File.Exists(path) && !Directory.Exists(path))
         {
-            SendToJs("error", new { message = "No se encontró el archivo o carpeta de telemetría seleccionado." });
+            SendToJs("error", new { message = "No se encontrÃ³ el archivo o carpeta de telemetrÃ­a seleccionado." });
             return;
         }
 
@@ -574,7 +557,7 @@ public partial class MainWindow : Window
 
         if (flightMeta.Shots.Count == 0)
         {
-            SendToJs("error", new { message = "No se encontraron coordenadas de disparo válidas en el archivo seleccionado." });
+            SendToJs("error", new { message = "No se encontraron coordenadas de disparo vÃ¡lidas en el archivo seleccionado." });
             return;
         }
 
@@ -618,7 +601,7 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
         {
-            SendToJs("error", new { message = "La carpeta seleccionada no es válida." });
+            SendToJs("error", new { message = "La carpeta seleccionada no es vÃ¡lida." });
             return;
         }
 
@@ -632,11 +615,11 @@ public partial class MainWindow : Window
                 bool isUp = await client.PingAsync();
                 if (!isUp)
                 {
-                    SendToJs("error", new { message = "No se pudo conectar a NodeODM en localhost:3000.\n\nPor favor, asegúrate de tener Docker Desktop instalado y en ejecución, y de haber iniciado el contenedor con:\ndocker-compose up -d" });
+                    SendToJs("error", new { message = "No se pudo conectar a NodeODM en localhost:3000.\n\nPor favor, asegÃºrate de tener Docker Desktop instalado y en ejecuciÃ³n, y de haber iniciado el contenedor con:\ndocker-compose up -d" });
                     return;
                 }
 
-                SendToJs("photogrammetry_progress", new { percent = 20, stage = "PREPARANDO", message = "Escaneando fotografías del dron..." });
+                SendToJs("photogrammetry_progress", new { percent = 20, stage = "PREPARANDO", message = "Escaneando fotografÃ­as del dron..." });
                 var photos = WebOdmService.ScanDronePhotos(folder);
                 if (photos.Count == 0)
                 {
@@ -649,7 +632,7 @@ public partial class MainWindow : Window
                 string taskName = $"PowerScan3D_{DateTime.Now:yyyyMMdd_HHmmss}";
                 string uuid = await client.CreateTaskAsync(taskName, photos, preset);
 
-                SendToJs("photogrammetry_progress", new { percent = 50, stage = "PROCESANDO", message = "Fotos subidas. Fotogrametría 3D en progreso (esto puede tardar horas)..." });
+                SendToJs("photogrammetry_progress", new { percent = 50, stage = "PROCESANDO", message = "Fotos subidas. FotogrametrÃ­a 3D en progreso (esto puede tardar horas)..." });
 
                 // Polling Loop
                 bool isDone = false;
@@ -660,7 +643,7 @@ public partial class MainWindow : Window
                     
                     if (info.status.code == 30) // Failed
                     {
-                        SendToJs("error", new { message = $"El procesamiento en NodeODM falló: {info.error}" });
+                        SendToJs("error", new { message = $"El procesamiento en NodeODM fallÃ³: {info.error}" });
                         return;
                     }
                     else if (info.status.code == 50) // Canceled
@@ -689,14 +672,7 @@ public partial class MainWindow : Window
                 string dsmPath = Path.Combine(libTiffDir, $"{taskName}_DSM.tif");
                 string dtmPath = Path.Combine(libTiffDir, $"{taskName}_DTM.tif");
 
-                await client.DownloadOrthophotoAsync(uuid, orthoPath);
-                
-                try {
-                    await client.DownloadDsmAsync(uuid, dsmPath);
-                    await client.DownloadDtmAsync(uuid, dtmPath);
-                } catch (Exception ex) {
-                    Console.WriteLine($"Error descargando DEMs: {ex.Message}");
-                }
+                await client.DownloadAndExtractResultsAsync(uuid, orthoPath, dsmPath, dtmPath);
 
                 SendToJs("photogrammetry_progress", new { percent = 100, stage = "COMPLETADO", message = "Mapas 3D guardados en la biblioteca." });
                 SendToJs("photogrammetry_completed", new { tiffPath = orthoPath, dsmPath = dsmPath, dtmPath = dtmPath });
@@ -715,7 +691,7 @@ public partial class MainWindow : Window
 
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
         {
-            SendToJs("error", new { message = "La carpeta de fotografías de dron seleccionada no es válida o no existe." });
+            SendToJs("error", new { message = "La carpeta de fotografÃ­as de dron seleccionada no es vÃ¡lida o no existe." });
             return;
         }
 
@@ -730,19 +706,19 @@ public partial class MainWindow : Window
                 {
                     percent = 5,
                     stage = "INICIANDO",
-                    message = "Leyendo telemetría RTK cinemática y fotos aéreas..."
+                    message = "Leyendo telemetrÃ­a RTK cinemÃ¡tica y fotos aÃ©reas..."
                 });
 
-                // 1. Extraer telemetría cinemática real de los archivos DJI .MRK o EXIF
+                // 1. Extraer telemetrÃ­a cinemÃ¡tica real de los archivos DJI .MRK o EXIF
                 var flightMeta = WebOdmService.ParseDjiFlightTelemetry(folder);
 
                 if (flightMeta.Shots.Count == 0)
                 {
-                    SendToJs("error", new { message = "No se encontraron fotos o archivo de telemetría válido (.MRK, .CSV) en la carpeta seleccionada." });
+                    SendToJs("error", new { message = "No se encontraron fotos o archivo de telemetrÃ­a vÃ¡lido (.MRK, .CSV) en la carpeta seleccionada." });
                     return;
                 }
 
-                // 2. Generar el GeoTIFF fotogramétrico dedicado para este vuelo con reporte de progreso
+                // 2. Generar el GeoTIFF fotogramÃ©trico dedicado para este vuelo con reporte de progreso
                 string outputTiff = WebOdmService.GenerateFlightOrthophoto(flightMeta, libTiffDir, preset, (pct, msg) =>
                 {
                     SendToJs("photogrammetry_progress", new
@@ -758,7 +734,7 @@ public partial class MainWindow : Window
                     _currentTiffPath = outputTiff;
                     _currentTiffMeta = GeoTiffService.LoadGeoTiff(_currentTiffPath);
 
-                    // Enviar Ortofoto dedicada a JavaScript (sin análisis automático)
+                    // Enviar Ortofoto dedicada a JavaScript (sin anÃ¡lisis automÃ¡tico)
                     SendToJs("geotiff_loaded", new
                     {
                         filename = _currentTiffMeta.FileName,
@@ -775,7 +751,7 @@ public partial class MainWindow : Window
                         debug_info = _currentTiffMeta.DebugInfo
                     });
 
-                    // Notificar actualización de biblioteca
+                    // Notificar actualizaciÃ³n de biblioteca
                     SendToJs("library_catalog_updated", LibraryService.GetCatalog());
                 }
 
@@ -784,12 +760,12 @@ public partial class MainWindow : Window
                     status = "COMPLETED",
                     output_tiff = outputTiff,
                     preset = preset,
-                    message = $"Ortomosaico fotogramétrico generado con éxito y guardado en la biblioteca: {Path.GetFileName(outputTiff)}"
+                    message = $"Ortomosaico fotogramÃ©trico generado con Ã©xito y guardado en la biblioteca: {Path.GetFileName(outputTiff)}"
                 });
             }
             catch (Exception ex)
             {
-                SendToJs("error", new { message = $"Error durante la generación de la ortofoto: {ex.Message}" });
+                SendToJs("error", new { message = $"Error durante la generaciÃ³n de la ortofoto: {ex.Message}" });
             }
         });
     }
@@ -874,3 +850,6 @@ public partial class MainWindow : Window
         }
     }
 }
+
+
+

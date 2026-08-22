@@ -10,5 +10,19 @@ services:
     volumes:
       - nodeodm_data:/var/www/data
 
+  ai-engine:
+    build: ./PowerScan3D.AI
+    container_name: powerscan_ai
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    volumes:
+      - C:/Users/Cristian/Downloads:/downloads
+      - ./PowerScan3D.AI/main.py:/app/main.py
+      - ./NEON.pt:/app/NEON.pt
+
 volumes:
   nodeodm_data:
+
+
+

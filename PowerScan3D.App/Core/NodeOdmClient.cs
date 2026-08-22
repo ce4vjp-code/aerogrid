@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.IO.Compression;
 
 namespace PowerScan3D.App.Core;
 
@@ -89,27 +90,35 @@ public class NodeOdmClient
         return JsonSerializer.Deserialize<NodeOdmTaskInfo>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new NodeOdmTaskInfo();
     }
 
-    public async Task DownloadOrthophotoAsync(string uuid, string outputPath)
+    public async Task DownloadAndExtractResultsAsync(string uuid, string orthoPath, string dsmPath, string dtmPath)
     {
-        var response = await _client.GetAsync($"{_endpoint}/task/{uuid}/download/odm_orthophoto/odm_orthophoto.tif");
-        response.EnsureSuccessStatusCode();
-        using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await response.Content.CopyToAsync(fs);
-    }
+        string tempZip = Path.Combine(Path.GetTempPath(), $"{uuid}_all.zip");
+        string extractDir = Path.Combine(Path.GetTempPath(), $"{uuid}_extracted");
 
-    public async Task DownloadDsmAsync(string uuid, string outputPath)
-    {
-        var response = await _client.GetAsync($"{_endpoint}/task/{uuid}/download/odm_dem/dsm.tif");
-        response.EnsureSuccessStatusCode();
-        using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await response.Content.CopyToAsync(fs);
-    }
+        try
+        {
+            var response = await _client.GetAsync($"{_endpoint}/task/{uuid}/download/all.zip");
+            response.EnsureSuccessStatusCode();
+            using (var fs = new FileStream(tempZip, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                await response.Content.CopyToAsync(fs);
+            }
 
-    public async Task DownloadDtmAsync(string uuid, string outputPath)
-    {
-        var response = await _client.GetAsync($"{_endpoint}/task/{uuid}/download/odm_dem/dtm.tif");
-        response.EnsureSuccessStatusCode();
-        using var fs = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None);
-        await response.Content.CopyToAsync(fs);
+            if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
+            System.IO.Compression.ZipFile.ExtractToDirectory(tempZip, extractDir);
+
+            string extOrtho = Path.Combine(extractDir, "odm_orthophoto", "odm_orthophoto.tif");
+            string extDsm = Path.Combine(extractDir, "odm_dem", "dsm.tif");
+            string extDtm = Path.Combine(extractDir, "odm_dem", "dtm.tif");
+
+            if (File.Exists(extOrtho)) File.Move(extOrtho, orthoPath, true);
+            if (File.Exists(extDsm)) File.Move(extDsm, dsmPath, true);
+            if (File.Exists(extDtm)) File.Move(extDtm, dtmPath, true);
+        }
+        finally
+        {
+            if (File.Exists(tempZip)) File.Delete(tempZip);
+            if (Directory.Exists(extractDir)) Directory.Delete(extractDir, true);
+        }
     }
 }
