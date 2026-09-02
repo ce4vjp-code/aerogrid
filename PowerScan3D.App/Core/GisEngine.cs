@@ -138,7 +138,9 @@ public class GisEngine
         }
         else
         {
-            // Fallback 2D clásico
+            // Fallback 2D clásico + Caída Cilíndrica
+            double radioCaida = tree.HeightM + (tree.CrownDiameterM / 2.0);
+            
             if (tree.IsInsideCorridor)
             {
                 if (tree.HeightM > 3.0)
@@ -154,11 +156,17 @@ public class GisEngine
                     tree.RecommendedAction = "Notificar propietario (Matorral/Cerco vivo)";
                 }
             }
+            else if (minDistance2D < radioCaida)
+            {
+                tree.RiskLevel = "ALTO";
+                tree.RiskColor = "#ff9900";
+                tree.RecommendedAction = "Poda / Tala (Riesgo de Caída sobre red 2D)";
+            }
             else
             {
                 tree.RiskLevel = "BAJO";
                 tree.RiskColor = "#00e676";
-                tree.RecommendedAction = "Fuera de servidumbre";
+                tree.RecommendedAction = "Fuera de servidumbre y sin riesgo de caída";
             }
         }
 

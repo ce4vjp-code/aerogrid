@@ -1040,17 +1040,16 @@ function toggleBaseLayer() {
 function updateBaseToggleButton(isActive) {
     const btn = document.getElementById('btnToggleBaseLayer');
     const icon = document.getElementById('iconToggleBase');
-    const text = document.getElementById('textToggleBase');
-    if (!btn || !icon || !text) return;
+    if (!btn || !icon) return;
 
     if (isActive) {
         btn.classList.remove('base-off');
         icon.className = 'fa-solid fa-eye-slash';
-        text.textContent = 'Apagar Mapa Satelital';
+        btn.title = 'Ocultar mapa satelital base';
     } else {
         btn.classList.add('base-off');
         icon.className = 'fa-solid fa-eye';
-        text.textContent = 'Encender Mapa Satelital';
+        btn.title = 'Mostrar mapa satelital base';
     }
 }
 
@@ -1097,7 +1096,6 @@ function toggleCorridorVisibility(isVisible) {
     const toggle = document.getElementById('corridorVisibilityToggle');
     const btn = document.getElementById('btnToggleCorridorLayer');
     const icon = document.getElementById('iconToggleCorridor');
-    const text = document.getElementById('textToggleCorridor');
 
     if (toggle) toggle.checked = isVisible;
 
@@ -1107,20 +1105,20 @@ function toggleCorridorVisibility(isVisible) {
             btn.style.background = 'rgba(255, 204, 0, 0.15)';
             btn.style.borderColor = 'rgba(255, 204, 0, 0.4)';
             btn.style.color = 'var(--risk-medium)';
+            btn.title = 'Ocultar Servidumbre (20m)';
         }
         if (icon) icon.className = 'fa-solid fa-draw-polygon';
-        if (text) text.textContent = 'Apagar Servidumbre';
         showToast("Franja de servidumbre visible (20m)");
     } else {
         state.map.removeLayer(state.layers.corridor);
         if (btn) {
             btn.style.background = 'rgba(255, 255, 255, 0.05)';
-            btn.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            btn.style.borderColor = 'rgba(255, 255, 255, 0.1)';
             btn.style.color = 'var(--text-secondary)';
+            btn.title = 'Mostrar Servidumbre (20m)';
         }
-        if (icon) icon.className = 'fa-solid fa-eye-slash';
-        if (text) text.textContent = 'Encender Servidumbre';
-        showToast("Franja de servidumbre apagada");
+        if (icon) icon.className = 'fa-solid fa-vector-square';
+        showToast("Franja de servidumbre oculta");
     }
 }
 

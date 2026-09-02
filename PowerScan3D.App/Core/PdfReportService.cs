@@ -22,12 +22,18 @@ public class PdfReportService
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
             Directory.CreateDirectory(dir);
 
-        var insideTrees = trees.Where(t => t.IsInsideCorridor).ToList();
-        var critTrees = insideTrees.Where(t => t.RiskLevel == "CRITICO").ToList();
-        var highTrees = insideTrees.Where(t => t.RiskLevel == "ALTO").ToList();
-        var medTrees = insideTrees.Where(t => t.RiskLevel == "MEDIO").ToList();
+        // Incluir ǭrboles en servidumbre, O cualquier ǭrbol que suponga un riesgo.
+        var targetTrees = trees.Where(t => t.IsInsideCorridor || t.RiskLevel == "CRITICO" || t.RiskLevel == "ALTO" || t.RiskLevel == "MEDIO").ToList();
+        var critTrees = targetTrees.Where(t => t.RiskLevel == "CRITICO").ToList();
+        var highTrees = targetTrees.Where(t => t.RiskLevel == "ALTO").ToList();
+        var medTrees = targetTrees.Where(t => t.RiskLevel == "MEDIO").ToList();
 
-        var sortedPriority = insideTrees.OrderBy(t => t.DistanceToCableM).Take(25).ToList();
+        // Ordenar primero por riesgo, y luego por distancia al cable
+        var sortedPriority = targetTrees
+            .OrderBy(t => t.RiskLevel == "CRITICO" ? 0 : t.RiskLevel == "ALTO" ? 1 : t.RiskLevel == "MEDIO" ? 2 : 3)
+            .ThenBy(t => t.DistanceToCableM)
+            
+            .ToList();
 
         var document = Document.Create(container =>
         {
@@ -99,8 +105,8 @@ public class PdfReportService
                     {
                         row.RelativeItem().Border(1).BorderColor(Colors.Blue.Lighten2).Padding(6).Column(c =>
                         {
-                            c.Item().Text($"{insideTrees.Count}").Bold().FontSize(14).FontColor(Colors.Blue.Darken2);
-                            c.Item().Text("Total en Servidumbre").FontSize(7).FontColor(Colors.Grey.Medium);
+                            c.Item().Text($"{targetTrees.Count}").Bold().FontSize(14).FontColor(Colors.Blue.Darken2);
+                            c.Item().Text("Total en Seguimiento").FontSize(7).FontColor(Colors.Grey.Medium);
                         });
 
                         row.RelativeItem().Border(1).BorderColor(Colors.Red.Lighten2).Padding(6).Column(c =>
@@ -112,13 +118,13 @@ public class PdfReportService
                         row.RelativeItem().Border(1).BorderColor(Colors.Orange.Lighten2).Padding(6).Column(c =>
                         {
                             c.Item().Text($"{highTrees.Count}").Bold().FontSize(14).FontColor(Colors.Orange.Darken2);
-                            c.Item().Text("Riesgo Alto (4-7m)").FontSize(7).FontColor(Colors.Grey.Medium);
+                            c.Item().Text("Riesgo Alto (Cada/Cerca)").FontSize(7).FontColor(Colors.Grey.Medium);
                         });
 
                         row.RelativeItem().Border(1).BorderColor(Colors.Green.Lighten2).Padding(6).Column(c =>
                         {
                             c.Item().Text($"{medTrees.Count}").Bold().FontSize(14).FontColor(Colors.Green.Darken2);
-                            c.Item().Text("Preventivos (7-10m)").FontSize(7).FontColor(Colors.Grey.Medium);
+                            c.Item().Text("Preventivos (Medio)").FontSize(7).FontColor(Colors.Grey.Medium);
                         });
                     });
 

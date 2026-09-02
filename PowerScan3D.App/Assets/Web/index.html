@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PowerScan 3D - C# Native Edition</title>
+    <title>AeroGrid - C# Native Edition</title>
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="styles.css">
@@ -18,20 +18,64 @@
             <div class="logo-section">
                 <i class="fa-solid fa-bolt-lightning logo-icon"></i>
                 <div class="title-group">
-                    <h1>PowerScan 3D <span class="badge-csharp">C# .NET 10</span></h1>
+                    <h1>AeroGrid <span class="badge-csharp">C# .NET 10</span></h1>
                     <p class="subtitle">Inspección de Servidumbres Eléctricas con Dron, GeoTIFF y KMZ</p>
                 </div>
             </div>
             
             <div class="header-status">
-                <div class="status-pill csharp-pill">
-                    <i class="fa-solid fa-microchip"></i>
-                    <span>Motor Nativo C# (NetTopologySuite + LibTiff)</span>
+                <!-- Header Tools Bar -->
+                <div class="header-toolbar">
+                    <div class="opacity-slider-wrap" title="Opacidad de la Ortofoto">
+                        <i class="fa-solid fa-circle-half-stroke" style="color: var(--text-secondary);"></i>
+                        <input type="range" id="orthoOpacitySlider" min="0.1" max="1.0" step="0.05" value="1.0">
+                        <span id="orthoOpacityVal" style="width: 32px; font-size: 10px;">100%</span>
+                    </div>
+
+                    <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.15); margin: 0 2px;"></div>
+
+                    <button id="btnMeasureTool" class="icon-tool-btn" style="color: var(--accent-cyan);" title="Herramienta Medir Distancia">
+                        <i class="fa-solid fa-ruler"></i>
+                    </button>
+                    <button id="btnToggleHeatmap" class="icon-tool-btn" style="color: #ff6600;" title="Mapa de Calor de Riesgos">
+                        <i class="fa-solid fa-fire"></i>
+                    </button>
+                    <button id="btnToggleCorridorLayer" class="icon-tool-btn" style="color: var(--risk-medium);" title="Ocultar/Mostrar Servidumbre (20m)">
+                        <i class="fa-solid fa-draw-polygon" id="iconToggleCorridor"></i>
+                    </button>
+
+                    <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.15); margin: 0 2px;"></div>
+
+                    <!-- Compact GPS Search -->
+                    <div style="display: flex; align-items: center; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 4px; gap: 4px; transition: all 0.3s ease;">
+                        <i class="fa-solid fa-map-pin" style="color: var(--accent-cyan); font-size: 10px; margin-left: 2px;"></i>
+                        <input type="text" id="gpsSearchInput" placeholder="Lat, Lon" style="background: transparent; border: none; color: white; width: 60px; font-size: 10px; outline: none; transition: width 0.3s ease;" onfocus="this.style.width='120px'; this.parentElement.style.borderColor='var(--accent-cyan)';" onblur="this.style.width='60px'; this.parentElement.style.borderColor='rgba(255,255,255,0.1)';">
+                        <button id="btnSearchGpsCoords" style="background: transparent; border: none; color: var(--accent-cyan); cursor: pointer; display: flex; align-items: center;" title="Buscar Coordenada">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </button>
+                        <button id="btnClearGpsMarker" style="background: transparent; border: none; color: var(--risk-high); cursor: pointer; display: none; align-items: center;" title="Limpiar Marcador">
+                            <i class="fa-solid fa-times"></i>
+                        </button>
+                    </div>
+                    <div style="width: 1px; height: 18px; background: rgba(255,255,255,0.15); margin: 0 2px;"></div>
+
+                    <!-- Base map layers -->
+                    <button id="btnToggleBaseLayer" class="icon-tool-btn" title="Ocultar/Mostrar mapa satelital base">
+                        <i class="fa-solid fa-eye-slash" id="iconToggleBase"></i>
+                    </button>
+                    <button class="layer-btn icon-tool-btn active" data-layer="orthophoto" title="Mapa Satelital Base">
+                        <i class="fa-solid fa-satellite"></i>
+                    </button>
+                    <button class="layer-btn icon-tool-btn" data-layer="osm" title="Mapa Topográfico Base">
+                        <i class="fa-solid fa-map"></i>
+                    </button>
+                    <button id="btnLocateMe" class="icon-tool-btn" style="color: var(--accent-cyan);" title="Centrar en mi ubicación">
+                        <i class="fa-solid fa-location-crosshairs"></i>
+                    </button>
                 </div>
-                <div class="corridor-badge">
-                    <i class="fa-solid fa-ruler-horizontal"></i>
-                    <span>Servidumbre: <strong id="headerCorridorWidth">20 m</strong> (±10m)</span>
-                </div>
+
+                <div style="width: 1px; height: 24px; background: rgba(255,255,255,0.15); margin: 0 4px;"></div>
+
                 <button id="btnResetWorkspace" class="btn-clear-workspace" title="Borrar foto y KMZ actual para repetir el proceso">
                     <i class="fa-solid fa-trash-can"></i>
                     <span>Limpiar Mapa</span>
@@ -48,7 +92,7 @@
                     <div class="section-header justify-between">
                         <div class="flex-align">
                             <i class="fa-solid fa-mountain-sun"></i>
-                            <h3>1. Ortofoto Real (GeoTIFF)</h3>
+                            <h3>1. Ortofoto (GeoTIFF)</h3>
                         </div>
                         <span class="badge badge-tiff" id="tiffStatusBadge">GeoTIFF 180MB+</span>
                     </div>
@@ -149,7 +193,7 @@
                         <div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px;">
                             <div style="font-size: 10px; color: var(--text-secondary); margin-bottom: 5px; display:flex; align-items:center; gap:5px;">
                                 <i class="fa-solid fa-layer-group" style="color:#00e5ff;"></i>
-                                <span>Modelos de Elevación 3D (para alturas reales)</span>
+                                <span>Modelos de Elevación 3D</span>
                             </div>
                             <div class="kmz-btn-group" style="gap: 4px;">
                                 <button id="btnLoadDsm" class="btn-tiny" style="flex:1; border-color: rgba(255,180,0,0.4); color:#ffb400;" title="Modelo Digital de Superficie — techo de la vegetación">
@@ -181,10 +225,8 @@
                         </div>
                         <span class="badge badge-accent" id="kmzStatusBadge">Servidumbre 20m</span>
                     </div>
-
-                    <p class="section-desc">Carga uno o varios archivos KMZ/KML (ej: <strong>Redes + Postes</strong> con Ctrl) para superponerlos simultáneamente.</p>
                     
-                    <div class="kmz-btn-group">
+                    <div class="kmz-btn-group" style="margin-top: 8px;">
                         <button id="btnLoadKMZFile" class="btn-secondary" style="flex: 1.2;" title="Selecciona uno o más archivos KML/KMZ con Ctrl">
                             <i class="fa-solid fa-folder-open"></i>
                             <span>Cargar KML/KMZ (Múltiple)...</span>
@@ -250,7 +292,6 @@
                             <span class="val-display" id="corridorSliderVal">20 m</span>
                         </div>
                         <input type="range" id="corridorSlider" min="5" max="40" value="20" step="1" class="slider">
-                        <small class="help-text">Buffer paramétrico calculado por NetTopologySuite (±10 m)</small>
                     </div>
 
                     <div class="input-group" style="margin-top: 4px;">
@@ -259,12 +300,11 @@
                             <span class="val-display" id="sensitivitySliderVal" style="color: var(--accent-cyan);">Nivel 4 (Alta)</span>
                         </div>
                         <input type="range" id="sensitivitySlider" min="1" max="5" value="4" step="1" class="slider" style="accent-color: var(--accent-cyan);">
-                        <small class="help-text">Nivel 4-5 detecta pinos oscuros, eucaliptos y vegetación mixta</small>
                     </div>
 
                     <button id="btnRunAnalysis" class="btn-primary btn-run-analysis" style="margin-top: 4px;">
                         <i class="fa-solid fa-play"></i>
-                        <span>Ejecutar Detección Real de Vegetación</span>
+                        <span>Ejecutar Detección de Vegetación</span>
                     </button>
 
                     <!-- Scanning Progress Bar -->
@@ -338,7 +378,7 @@
                 <div class="export-actions">
                     <button id="btnExportPDF" class="btn-primary" style="flex: 100%; margin-bottom: 4px; background: linear-gradient(135deg, #b71c1c, #e53935);">
                         <i class="fa-solid fa-file-pdf"></i>
-                        <span>Generar Informe PDF (QuestPDF C#)</span>
+                        <span>Generar Informe PDF</span>
                     </button>
                     <button id="btnExportCSV" class="btn-secondary">
                         <i class="fa-solid fa-file-csv"></i>
@@ -351,66 +391,7 @@
             <main class="map-wrapper">
                 <div id="map"></div>
 
-                <!-- Orthophoto Opacity & Controls Bar -->
-                <div class="map-overlay-card orthophoto-toolbar">
-                    <div class="ortho-title">
-                        <i class="fa-solid fa-camera-retro"></i>
-                        <span>Ortofoto:</span>
-                    </div>
-                    <div class="opacity-slider-wrap">
-                        <span>Opacidad:</span>
-                        <input type="range" id="orthoOpacitySlider" min="0.1" max="1.0" step="0.05" value="1.0">
-                        <span id="orthoOpacityVal">100%</span>
-                    </div>
-
-                    <!-- Botón para apagar/encender mapa base satelital -->
-                    <button id="btnToggleBaseLayer" class="btn-toggle-base" title="Ocultar o mostrar el mapa satelital de fondo">
-                        <i class="fa-solid fa-eye-slash" id="iconToggleBase"></i>
-                        <span id="textToggleBase">Apagar Mapa Satelital</span>
-                    </button>
-                    <button id="btnMeasureTool" class="btn-toggle-base" style="background: rgba(0, 229, 255, 0.2); border-color: #00e5ff; color: #00e5ff; margin-left: 10px;" title="Medir distancia manualmente en el mapa">
-                        <i class="fa-solid fa-ruler"></i>
-                        <span>Medir Distancia</span>
-                    </button>
-                    <button id="btnToggleHeatmap" class="btn-toggle-base" style="background: rgba(255, 100, 0, 0.2); border-color: #ff6600; color: #ff6600; margin-left: 10px;" title="Activar/Desactivar Mapa de Calor de Riesgos">
-                        <i class="fa-solid fa-fire"></i>
-                        <span>Mapa de Calor</span>
-                    </button>
-
-                    <!-- Botón para apagar/encender franja de servidumbre -->
-                    <button id="btnToggleCorridorLayer" class="btn-toggle-base" style="background: rgba(255, 204, 0, 0.15); border-color: rgba(255, 204, 0, 0.4); color: var(--risk-medium);" title="Ocultar o mostrar la franja de servidumbre de 20 metros">
-                        <i class="fa-solid fa-draw-polygon" id="iconToggleCorridor"></i>
-                        <span id="textToggleCorridor">Apagar Servidumbre</span>
-                    </button>
-                </div>
-
-                <!-- Map Mode Layer Selector -->
-                <div class="map-overlay-card layer-switcher">
-                    <button class="layer-btn active" data-layer="orthophoto">
-                        <i class="fa-solid fa-satellite"></i> Satelital
-                    </button>
-                    <button class="layer-btn" data-layer="dark">
-                        <i class="fa-solid fa-moon"></i> Carto Oscuro
-                    </button>
-                    <button class="layer-btn" data-layer="osm">
-                        <i class="fa-solid fa-map"></i> Topográfico
-                    </button>
-                    <button class="layer-btn" id="btnLocateMe" style="border-color: rgba(0, 229, 255, 0.4); color: var(--accent-cyan);" title="Centrar mapa en mi ubicación actual">
-                        <i class="fa-solid fa-location-crosshairs"></i> Mi Ubicación
-                    </button>
-                </div>
-
-                <!-- GPS Coordinate Search -->
-                <div class="map-overlay-card" style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(30, 32, 43, 0.85); backdrop-filter: blur(8px); border: 1px solid rgba(0, 229, 255, 0.3); border-radius: 8px;">
-                    <i class="fa-solid fa-map-pin" style="color: var(--accent-cyan);"></i>
-                    <input type="text" id="gpsSearchInput" placeholder="Lat, Lon (ej: -37.12, -72.45)" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 180px; outline: none;" onfocus="this.style.borderColor='var(--accent-cyan)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
-                    <button id="btnSearchGpsCoords" class="btn-tiny" style="background: var(--accent-cyan); color: #000; padding: 4px 8px; font-weight: bold;" title="Buscar coordenada y agregar marcador">
-                        Ir
-                    </button>
-                    <button id="btnClearGpsMarker" class="btn-tiny" style="background: rgba(255, 59, 48, 0.2); color: var(--risk-high); padding: 4px 8px; display: none;" title="Quitar marcador">
-                        <i class="fa-solid fa-times"></i>
-                    </button>
-                </div>
+                <!-- Map view without absolute toolbars -->
 
                 <!-- Floating Map Controls / Legend -->
                 <div class="map-overlay-card map-legend" id="mapLegendCard">

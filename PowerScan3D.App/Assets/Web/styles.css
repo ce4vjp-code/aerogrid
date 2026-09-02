@@ -710,24 +710,34 @@ input:checked + .slider-round:before {
     color: var(--text-primary);
 }
 
-.orthophoto-toolbar {
-    top: 64px;
-    right: 16px;
-    left: auto;
+.header-toolbar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     font-size: 11px;
-    padding: 6px 12px;
-    z-index: 1000;
+    padding: 4px 8px;
+    background: rgba(19, 25, 35, 0.88);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
 }
 
-.ortho-title {
+.icon-tool-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-weight: 600;
-    color: var(--accent-cyan);
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.icon-tool-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    transform: scale(1.05);
 }
 
 .opacity-slider-wrap {
@@ -792,10 +802,17 @@ input:checked + .slider-round:before {
     transition: all 0.2s;
 }
 
-.layer-btn.active {
+.layer-btn.active, .icon-tool-btn.active {
     background: var(--accent-blue);
     border-color: var(--accent-blue);
     color: #fff;
+}
+
+.layer-btn.icon-tool-btn {
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    justify-content: center;
 }
 
 .layer-btn.btn-no-base {
