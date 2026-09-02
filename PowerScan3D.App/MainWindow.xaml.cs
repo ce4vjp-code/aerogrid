@@ -507,7 +507,17 @@ public partial class MainWindow : Window
             _currentDtmPath
         );
 
-        if (realTrees == null) { SendToJs("error", new { message = "Error interno o timeout al conectar con la Inteligencia Artificial (Powerscan_AI). El análisis se canceló." }); return; } else if (realTrees.Any()) { _currentTrees = realTrees; } else { _currentTrees.Clear(); }
+        if (realTrees == null) { SendToJs("error", new { message = "Error interno o timeout al conectar con la Inteligencia Artificial (Powerscan_AI). El análisis se canceló." }); return; }
+        
+        var manualTrees = _currentTrees.Where(t => t.Id.StartsWith("ARB-MAN")).ToList();
+        
+        if (realTrees.Any()) { 
+            _currentTrees = realTrees; 
+        } else { 
+            _currentTrees.Clear(); 
+        }
+        
+        _currentTrees.AddRange(manualTrees);
 
         var corridorPolygon = _gisEngine.GenerateMultiCorridorPolygons(_currentLineSegments, _currentCorridorWidthM);
 
@@ -801,6 +811,11 @@ public partial class MainWindow : Window
 
                     // Notificar actualizaciÃ³n de biblioteca
                     SendToJs("library_catalog_updated", LibraryService.GetCatalog());
+                }
+
+                if (!File.Exists(outputTiff)) {
+                    SendToJs("error", new { message = "Fallo al generar el ortomosaico. El archivo de salida no se creó." });
+                    return;
                 }
 
                 SendToJs("photogrammetry_completed", new

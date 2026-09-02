@@ -433,8 +433,16 @@ public class GeoTiffService
             client.Timeout = TimeSpan.FromMinutes(60);
             
             var content = new System.Net.Http.StringContent(jsonPayload, System.Text.Encoding.UTF8, "application/json");
-            var response = client.PostAsync("http://localhost:8000/analyze", content).Result;
-            response.EnsureSuccessStatusCode();
+            System.Net.Http.HttpResponseMessage response;
+            try
+            {
+                response = client.PostAsync("http://localhost:8000/analyze", content).Result;
+                response.EnsureSuccessStatusCode();
+            }
+            catch (Exception ex) when (ex is System.Net.Http.HttpRequestException || ex is TimeoutException || ex.InnerException is System.Net.Http.HttpRequestException || ex.InnerException is TimeoutException || ex.InnerException is System.Threading.Tasks.TaskCanceledException)
+            {
+                throw new Exception("Error de conexión: Docker/IA no está disponible en localhost:8000. Por favor, asegúrese de que el contenedor esté corriendo.", ex);
+            }
 
             string resultJson = response.Content.ReadAsStringAsync().Result; System.IO.File.WriteAllText(@"C:\Users\Cristian\Downloads\aerogrid\PowerScan3D.App\ai_response_debug.json", resultJson);
             using var doc = System.Text.Json.JsonDocument.Parse(resultJson);
@@ -508,6 +516,10 @@ public class GeoTiffService
                     utmZone = (int)Math.Floor((refLon + 180.0) / 6.0) + 1;
                     utmSouth = refLat < 0;
                 }
+                if (utmZone == 0)
+                {
+                    throw new Exception("Error: El raster DSM está en UTM, pero no se pudo determinar la zona UTM válida (utmZone = 0). Proceso abortado para evitar coordenadas inválidas.");
+                }
             }
 
             double minConfidence = sensitivity >= 8 ? 10.0 : (sensitivity >= 4 ? 25.0 : 50.0);
@@ -557,10 +569,18 @@ public class GeoTiffService
                 // ---- DSM: Exact pixel value at coordinate (Matches QGIS Identify Tool) ----
                 if (dsmFloat != null && dsmScaleX > 0)
                 {
-                    float dsmZ = NearestSample(
+                    float dsmZ = SampleApexInBbox(
                         dsmFloat, dsmW, dsmH,
                         dsmOriginX, dsmOriginY, dsmScaleX, dsmScaleY,
-                        sampleCentroidX, sampleCentroidY, dsmNoData);
+                        sampleBboxMinX, sampleBboxMaxX, sampleBboxMinY, sampleBboxMaxY, dsmNoData);
+
+                    if (dsmZ <= -9000f)
+                    {
+                        dsmZ = NearestSample(
+                            dsmFloat, dsmW, dsmH,
+                            dsmOriginX, dsmOriginY, dsmScaleX, dsmScaleY,
+                            sampleCentroidX, sampleCentroidY, dsmNoData);
+                    }
 
                     if (dsmZ > -9000f)
                     {
@@ -569,7 +589,7 @@ public class GeoTiffService
                         // ---- DTM: Exact pixel value at coordinate ----
                         if (dtmFloat != null && dtmScaleX > 0)
                         {
-                            float groundZ = NearestSample(
+                            float groundZ = BilinearSample(
                                 dtmFloat, dtmW, dtmH,
                                 dtmOriginX, dtmOriginY, dtmScaleX, dtmScaleY,
                                 sampleCentroidX, sampleCentroidY, dtmNoData);
@@ -617,7 +637,9 @@ public class GeoTiffService
         }
         catch (Exception ex)
         {
-            System.IO.File.WriteAllText(@"C:\Users\Cristian\Downloads\aerogrid\PowerScan3D.App\error_log.txt", ex.ToString()); return null;
+            System.IO.File.WriteAllText(@"C:\Users\Cristian\Downloads\aerogrid\PowerScan3D.App\error_log.txt", ex.ToString());
+            if (ex.Message.Contains("Docker/IA no está disponible")) throw;
+            return null;
         }
 
         return detectedTrees;

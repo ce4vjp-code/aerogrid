@@ -859,8 +859,8 @@ function initUIControls() {
         const val = parseFloat(e.target.value);
         state.corridorWidthM = val;
         corridorSliderVal.textContent = `${val} m`;
-        headerCorridorWidth.textContent = `${val} m`;
-        legendCorridorWidth.textContent = `${val} m`;
+        if (headerCorridorWidth) headerCorridorWidth.textContent = `${val} m`;
+        if (legendCorridorWidth) legendCorridorWidth.textContent = `${val} m`;
         sendToCSharp("recalculate_corridor", { corridor_width_m: val });
     });
 
@@ -1263,8 +1263,8 @@ function renderTreesOnMap() {
             className: 'interactive-tree-marker'
         });
 
-        crownCircle.bindTooltip(`<strong>${t.Id}</strong> | ${speciesIcon} ${t.Species}<br>Dist: <b>${t.DistanceToCableM}m</b> | Riesgo: <b>${t.RiskLevel}</b>`, { sticky: true });
-        centerMarker.bindTooltip(`<strong>${t.Id}</strong> | ${speciesIcon} ${t.Species}<br>Dist: <b>${t.DistanceToCableM}m</b> | Riesgo: <b>${t.RiskLevel}</b>`, { sticky: true });
+        crownCircle.bindTooltip(`<strong>${t.Id}</strong> | ${speciesIcon} ${t.Species}<br>Dist: <b>${t.DistanceToCableM}m</b> | Altura: <b>${t.HeightM}m</b> | Riesgo: <b>${t.RiskLevel}</b>`, { sticky: true });
+        centerMarker.bindTooltip(`<strong>${t.Id}</strong> | ${speciesIcon} ${t.Species}<br>Dist: <b>${t.DistanceToCableM}m</b> | Altura: <b>${t.HeightM}m</b> | Riesgo: <b>${t.RiskLevel}</b>`, { sticky: true });
 
         // Eventos directos de clic garantizados en Leaflet
         crownCircle.on('click', (e) => {
@@ -1366,6 +1366,7 @@ function renderTreeTable() {
             <td>${t.DistanceToCableM} m</td>
             <td><span class="status-tag ${tagClass}">${t.RiskLevel}</span></td>
             <td>${t.HeightM}m</td>
+            <td><span style="font-size:10px;">${t.RecommendedAction || 'N/A'}</span></td>
             <td><button class="btn-table-focus" title="Centrar en mapa y abrir ficha"><i class="fa-solid fa-crosshairs"></i></button></td>
         `;
         tr.addEventListener('click', () => selectTree(t, 'table'));
@@ -1589,7 +1590,7 @@ function toggleMeasureTool() {
         btnMeasure.style.background = 'rgba(255, 51, 102, 0.2)';
         btnMeasure.style.color = '#ff3366';
         btnMeasure.style.borderColor = '#ff3366';
-        btnMeasure.querySelector('span').innerText = 'Cancelar Medici�n';
+        btnMeasure.title = 'Cancelar Medición';
         document.getElementById('map').style.cursor = 'crosshair';
         showToast("Herramienta de regla activa. Haz clic en el mapa para marcar el punto inicial.");
         state.map.on('click', onMeasureClick);
@@ -1598,14 +1599,13 @@ function toggleMeasureTool() {
         btnMeasure.style.background = 'rgba(0, 229, 255, 0.2)';
         btnMeasure.style.color = '#00e5ff';
         btnMeasure.style.borderColor = '#00e5ff';
-        btnMeasure.querySelector('span').innerText = 'Medir Distancia';
+        btnMeasure.title = 'Herramienta Medir Distancia';
         document.getElementById('map').style.cursor = '';
         state.map.off('click', onMeasureClick);
         state.map.off('mousemove', onMeasureMove);
         clearMeasure();
     }
 }
-
 function clearMeasure() {
     if (measureState.polyline) state.map.removeLayer(measureState.polyline);
     measureState.markers.forEach(m => state.map.removeLayer(m));

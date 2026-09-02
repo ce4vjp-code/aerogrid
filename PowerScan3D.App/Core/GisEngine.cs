@@ -78,7 +78,7 @@ public class GisEngine
                     double d1 = p1.Distance(ptOnLine);
                     double d2 = p2.Distance(ptOnLine);
                     
-                    if (Math.Abs((d1 + d2) - segLen) < 0.01) // El punto está en este segmento
+                    if (Math.Abs((d1 + d2) - segLen) < 0.1) // El punto está en este segmento
                     {
                         double fraction = segLen > 0 ? d1 / segLen : 0;
                         cableZ = p1.Z + fraction * (p2.Z - p1.Z);
@@ -94,8 +94,8 @@ public class GisEngine
                     
                     minClearanceV = cableZ - treeTopZ;
                     
-                    // Distancia 3D desde la BASE del árbol hasta el cable
-                    double dVertical = cableZ - treeBaseZ;
+                    // Distancia 3D desde la COPA del árbol hasta el cable
+                    double dVertical = cableZ - treeTopZ;
                     minDistance3D = Math.Sqrt((d * d) + (dVertical * dVertical));
                 }
             }
@@ -109,7 +109,7 @@ public class GisEngine
         if (has3DData)
         {
             // MOTOR 3D: Análisis Geométrico
-            double radioCaida = tree.HeightM + (tree.CrownDiameterM / 2.0);
+            double radioCaida = Math.Sqrt(Math.Pow(tree.HeightM, 2) + Math.Pow(tree.CrownDiameterM / 2.0, 2));
 
             if (minDistance2D <= halfWidth && minClearanceV < 4.0)
             {
@@ -139,7 +139,7 @@ public class GisEngine
         else
         {
             // Fallback 2D clásico + Caída Cilíndrica
-            double radioCaida = tree.HeightM + (tree.CrownDiameterM / 2.0);
+            double radioCaida = Math.Sqrt(Math.Pow(tree.HeightM, 2) + Math.Pow(tree.CrownDiameterM / 2.0, 2));
             
             if (tree.IsInsideCorridor)
             {
