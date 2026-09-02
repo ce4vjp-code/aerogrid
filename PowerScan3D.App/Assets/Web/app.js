@@ -197,6 +197,13 @@ function handleWorkspaceCleared() {
     state.geotiffRawDataUrl = null;
     state.geotiffDebugInfo = "";
 
+    if (state.gpsSearchMarker) {
+        state.map.removeLayer(state.gpsSearchMarker);
+        state.gpsSearchMarker = null;
+    }
+    const btnClearGpsMarker = document.getElementById('btnClearGpsMarker');
+    if (btnClearGpsMarker) btnClearGpsMarker.style.display = 'none';
+
     state.layers.corridor.clearLayers();
     state.layers.kmz.clearLayers();
     state.layers.powerline.clearLayers();
@@ -556,6 +563,68 @@ function initUIControls() {
     // Botón Mi Ubicación
     if (btnLocateMe) {
         btnLocateMe.addEventListener('click', () => locateUserAndCenterMap(true));
+    }
+
+    // Búsqueda de Coordenadas GPS
+    const btnSearchGpsCoords = document.getElementById('btnSearchGpsCoords');
+    const btnClearGpsMarker = document.getElementById('btnClearGpsMarker');
+    const gpsSearchInput = document.getElementById('gpsSearchInput');
+
+    if (btnSearchGpsCoords && gpsSearchInput) {
+        btnSearchGpsCoords.addEventListener('click', () => {
+            const val = gpsSearchInput.value.trim();
+            if (!val) return;
+            
+            // Intenta parsear "Lat, Lon" o "Lat Lon" o "Lon, Lat" (asumiendo Lat en Chile es negativo ~-30 y Lon ~-70)
+            const parts = val.split(/[,\s]+/).map(p => parseFloat(p)).filter(p => !isNaN(p));
+            if (parts.length >= 2) {
+                let lat = parts[0];
+                let lon = parts[1];
+                
+                // Corrección automática básica si el usuario pone Lon, Lat (Chile: lat ~ -17 a -56, lon ~ -66 a -75)
+                if (Math.abs(lon) < 56 && Math.abs(lat) > 60) {
+                    const temp = lat;
+                    lat = lon;
+                    lon = temp;
+                }
+
+                if (state.gpsSearchMarker) {
+                    state.map.removeLayer(state.gpsSearchMarker);
+                }
+
+                state.gpsSearchMarker = L.marker([lat, lon], {
+                    icon: L.divIcon({
+                        className: 'custom-gps-marker',
+                        html: '<i class="fa-solid fa-location-dot fa-2x" style="color: var(--accent-cyan); filter: drop-shadow(0px 4px 4px rgba(0,0,0,0.5));"></i>',
+                        iconSize: [30, 30],
+                        iconAnchor: [15, 30]
+                    })
+                }).addTo(state.map);
+
+                state.gpsSearchMarker.bindPopup(`<b>Coordenada Buscada</b><br>${lat.toFixed(6)}, ${lon.toFixed(6)}`).openPopup();
+                state.map.flyTo([lat, lon], 19, { animate: true, duration: 1.5 });
+                
+                if (btnClearGpsMarker) btnClearGpsMarker.style.display = 'block';
+            } else {
+                showToast("Formato inválido. Usa: Lat, Lon (ej: -37.123, -72.456)");
+            }
+        });
+
+        // Trigger con Enter
+        gpsSearchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') btnSearchGpsCoords.click();
+        });
+    }
+
+    if (btnClearGpsMarker) {
+        btnClearGpsMarker.addEventListener('click', () => {
+            if (state.gpsSearchMarker) {
+                state.map.removeLayer(state.gpsSearchMarker);
+                state.gpsSearchMarker = null;
+            }
+            if (gpsSearchInput) gpsSearchInput.value = '';
+            btnClearGpsMarker.style.display = 'none';
+        });
     }
 
     // Drone Flight Controls

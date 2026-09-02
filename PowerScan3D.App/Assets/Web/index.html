@@ -400,6 +400,18 @@
                     </button>
                 </div>
 
+                <!-- GPS Coordinate Search -->
+                <div class="map-overlay-card" style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: rgba(30, 32, 43, 0.85); backdrop-filter: blur(8px); border: 1px solid rgba(0, 229, 255, 0.3); border-radius: 8px;">
+                    <i class="fa-solid fa-map-pin" style="color: var(--accent-cyan);"></i>
+                    <input type="text" id="gpsSearchInput" placeholder="Lat, Lon (ej: -37.12, -72.45)" style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1); color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; width: 180px; outline: none;" onfocus="this.style.borderColor='var(--accent-cyan)'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
+                    <button id="btnSearchGpsCoords" class="btn-tiny" style="background: var(--accent-cyan); color: #000; padding: 4px 8px; font-weight: bold;" title="Buscar coordenada y agregar marcador">
+                        Ir
+                    </button>
+                    <button id="btnClearGpsMarker" class="btn-tiny" style="background: rgba(255, 59, 48, 0.2); color: var(--risk-high); padding: 4px 8px; display: none;" title="Quitar marcador">
+                        <i class="fa-solid fa-times"></i>
+                    </button>
+                </div>
+
                 <!-- Floating Map Controls / Legend -->
                 <div class="map-overlay-card map-legend" id="mapLegendCard">
                     <div class="legend-header" id="legendHeaderToggle" title="Minimizar / Expandir Simbología">
