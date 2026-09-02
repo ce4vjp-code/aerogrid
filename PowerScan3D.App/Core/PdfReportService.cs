@@ -16,7 +16,7 @@ public class PdfReportService
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
-    public static string GenerateReport(MissionModel mission, List<TreeModel> trees, double corridorWidthM, string outputPath)
+    public static string GenerateReport(MissionModel mission, List<TreeModel> trees, double corridorWidthM, string outputPath, GeoTiffMetadata? tiffMeta = null)
     {
         string? dir = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -27,6 +27,7 @@ public class PdfReportService
         var critTrees = targetTrees.Where(t => t.RiskLevel == "CRITICO").ToList();
         var highTrees = targetTrees.Where(t => t.RiskLevel == "ALTO").ToList();
         var medTrees = targetTrees.Where(t => t.RiskLevel == "MEDIO").ToList();
+        var lowTrees = targetTrees.Where(t => t.RiskLevel == "BAJO").ToList();
 
         // Ordenar primero por riesgo, y luego por distancia al cable
         var sortedPriority = targetTrees
@@ -51,7 +52,7 @@ public class PdfReportService
                     {
                         row.RelativeItem().Column(titleCol =>
                         {
-                            titleCol.Item().Text("POWERSCAN 3D | INFORME TÉCNICO DE VEGETACIÓN")
+                            titleCol.Item().Text("AEROGRID | INFORME TÉCNICO DE VEGETACIÓN")
                                 .Bold().FontSize(14).FontColor(Colors.Blue.Darken3);
                             titleCol.Item().Text("Inspección Aerofotogramétrica con Dron y Sobreposición KMZ")
                                 .FontSize(8).FontColor(Colors.Grey.Medium);
@@ -97,6 +98,23 @@ public class PdfReportService
                         table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text(mission.LengthKm);
                         table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text("Ancho Servidumbre:").Bold();
                         table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text($"{corridorWidthM} metros");
+
+                        // Métricas de Ortofoto (GSD, CRS, Área)
+                        if (tiffMeta != null)
+                        {
+                            double gsdCm = tiffMeta.GsdMeters * 100.0;
+                            double areaHa = Math.Abs((tiffMeta.MaxLon - tiffMeta.MinLon) * (tiffMeta.MaxLat - tiffMeta.MinLat)) * 12321.0; // aprox grados a hectáreas en latitudes medias
+                            
+                            table.Cell().Background(Colors.Grey.Lighten5).Padding(4).Text("Resolución (GSD):").Bold();
+                            table.Cell().Background(Colors.Grey.Lighten5).Padding(4).Text($"{gsdCm:F1} cm/px");
+                            table.Cell().Background(Colors.Grey.Lighten5).Padding(4).Text("Sistema Coordenadas:").Bold();
+                            table.Cell().Background(Colors.Grey.Lighten5).Padding(4).Text($"{tiffMeta.CrsName} (EPSG:{tiffMeta.EpsgCode})");
+
+                            table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text("Área Cubierta:").Bold();
+                            table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text($"~{areaHa:F1} hectáreas");
+                            table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text("Dimensiones Raster:").Bold();
+                            table.Cell().Background(Colors.Grey.Lighten4).Padding(4).Text($"{tiffMeta.Width} x {tiffMeta.Height} px");
+                        }
                     });
 
                     // KPIs
@@ -125,6 +143,12 @@ public class PdfReportService
                         {
                             c.Item().Text($"{medTrees.Count}").Bold().FontSize(14).FontColor(Colors.Green.Darken2);
                             c.Item().Text("Preventivos (Medio)").FontSize(7).FontColor(Colors.Grey.Medium);
+                        });
+
+                        row.RelativeItem().Border(1).BorderColor(Colors.Grey.Lighten2).Padding(6).Column(c =>
+                        {
+                            c.Item().Text($"{lowTrees.Count}").Bold().FontSize(14).FontColor(Colors.Grey.Darken1);
+                            c.Item().Text("Bajo (Monitoreo)").FontSize(7).FontColor(Colors.Grey.Medium);
                         });
                     });
 

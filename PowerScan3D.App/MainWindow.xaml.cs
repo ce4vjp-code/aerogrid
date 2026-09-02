@@ -526,7 +526,10 @@ public partial class MainWindow : Window
             trees = _currentTrees,
             corridor_polygon = corridorPolygon,
             corridor_width_m = _currentCorridorWidthM,
-            count = _currentTrees.Count
+            count = _currentTrees.Count,
+            ortho_gsd_cm = _currentTiffMeta != null ? Math.Round(_currentTiffMeta.GsdMeters * 100.0, 1) : (double?)null,
+            ortho_area_ha = _currentTiffMeta != null ? Math.Round(Math.Abs((_currentTiffMeta.MaxLon - _currentTiffMeta.MinLon) * (_currentTiffMeta.MaxLat - _currentTiffMeta.MinLat)) * 12321.0, 1) : (double?)null,
+            ortho_crs = _currentTiffMeta?.CrsName
         });
     }
 
@@ -539,7 +542,7 @@ public partial class MainWindow : Window
         string filename = $"Informe_Tecnico_Servidumbre_{Convert.ToInt32(_currentCorridorWidthM)}m_{_currentMission.Id}.pdf";
         string fullPath = Path.Combine(outputDir, filename);
 
-        PdfReportService.GenerateReport(_currentMission, _currentTrees, _currentCorridorWidthM, fullPath);
+        PdfReportService.GenerateReport(_currentMission, _currentTrees, _currentCorridorWidthM, fullPath, _currentTiffMeta);
 
         SendToJs("toast", new { message = $"Informe PDF generado con Ã©xito en C#: {filename}" });
 

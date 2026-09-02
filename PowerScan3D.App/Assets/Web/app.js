@@ -153,7 +153,10 @@ function handleCSharpMessage(action, payload) {
             renderTreesOnMap();
             renderTreeTable();
             updateMetricsAndUI();
-            showToast(`Análisis botánico completado: ${payload.count} árboles identificados con clasificación de especies`);
+            let msg = `Análisis completado: ${payload.count} árboles identificados`;
+            if (payload.ortho_area_ha) msg += ` | Área: ${payload.ortho_area_ha} ha`;
+            if (payload.ortho_gsd_cm) msg += ` | GSD: ${payload.ortho_gsd_cm} cm/px`;
+            showToast(msg);
             break;
 
         case "workspace_cleared":
