@@ -112,12 +112,37 @@ async def analyze_orthophoto(req: AnalyzeRequest):
                     else:
                         diam_m = width_px * pixel_size_x
                     
+                    # ---- Geo bounding box (for apex sampling in C# GIS engine) ----
+                    # Top-left corner of bbox
+                    x_min_geo, y_min_geo = out_transform * (row['xmin'], row['ymin'])
+                    # Bottom-right corner of bbox
+                    x_max_geo, y_max_geo = out_transform * (row['xmax'], row['ymax'])
+
+                    if not is_geographic:
+                        try:
+                            conv_min = transform_crs(src.crs, 'EPSG:4326', [x_min_geo], [y_min_geo])
+                            conv_max = transform_crs(src.crs, 'EPSG:4326', [x_max_geo], [y_max_geo])
+                            bbox_min_lon = conv_min[0][0]
+                            bbox_max_lat = conv_min[1][0]
+                            bbox_max_lon = conv_max[0][0]
+                            bbox_min_lat = conv_max[1][0]
+                        except:
+                            bbox_min_lon, bbox_max_lon = min(x_min_geo, x_max_geo), max(x_min_geo, x_max_geo)
+                            bbox_min_lat, bbox_max_lat = min(y_min_geo, y_max_geo), max(y_min_geo, y_max_geo)
+                    else:
+                        bbox_min_lon, bbox_max_lon = min(x_min_geo, x_max_geo), max(x_min_geo, x_max_geo)
+                        bbox_min_lat, bbox_max_lat = min(y_min_geo, y_max_geo), max(y_min_geo, y_max_geo)
+
                     trees.append({
                         "lat": float(lat),
                         "lon": float(lon),
                         "crownDiam": float(diam_m),
                         "confidence": float(row['score']),
-                        "species": "Desconocida"
+                        "species": "Desconocida",
+                        "bbox_min_lon": float(bbox_min_lon),
+                        "bbox_max_lon": float(bbox_max_lon),
+                        "bbox_min_lat": float(bbox_min_lat),
+                        "bbox_max_lat": float(bbox_max_lat)
                     })
                         
         return {"status": "success", "trees": trees, "count": len(trees)}

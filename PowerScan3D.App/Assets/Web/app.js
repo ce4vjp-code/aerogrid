@@ -106,6 +106,19 @@ function handleCSharpMessage(action, payload) {
 
         case "geotiff_loaded":
             handleGeoTiffLoaded(payload);
+            // Auto-update DSM/DTM labels if they were auto-detected
+            if (payload.has_dsm) updateElevationLabel('dsm', payload.dsm_filename || 'Auto-detectado');
+            if (payload.has_dtm) updateElevationLabel('dtm', payload.dtm_filename || 'Auto-detectado');
+            break;
+
+        case "dsm_loaded":
+            updateElevationLabel('dsm', payload.filename);
+            showToast(`DSM cargado: ${payload.filename}`);
+            break;
+
+        case "dtm_loaded":
+            updateElevationLabel('dtm', payload.filename);
+            showToast(`DTM cargado: ${payload.filename}`);
             break;
 
         case "drone_flight_loaded":
@@ -155,6 +168,21 @@ function handleCSharpMessage(action, payload) {
             showToast(`Error: ${payload.message}`);
             break;
     }
+}
+
+/**
+ * Actualiza el label de estado de DSM o DTM en la UI.
+ * @param {'dsm'|'dtm'} type
+ * @param {string} filename
+ */
+function updateElevationLabel(type, filename) {
+    const labelId = type === 'dsm' ? 'dsmStatusLabel' : 'dtmStatusLabel';
+    const label = document.getElementById(labelId);
+    if (!label) return;
+    const shortName = filename.length > 22 ? filename.substring(0, 20) + '…' : filename;
+    label.title = filename;
+    label.innerHTML = `<i class="fa-solid fa-circle-check"></i> ${shortName}`;
+    label.style.opacity = '1';
 }
 
 /**
@@ -730,6 +758,18 @@ function initUIControls() {
         btnLoadGeoTiff.addEventListener('click', () => sendToCSharp("open_geotiff_dialog"));
     }
 
+    // Cargar DSM (Modelo Digital de Superficie)
+    const btnLoadDsm = document.getElementById('btnLoadDsm');
+    if (btnLoadDsm) {
+        btnLoadDsm.addEventListener('click', () => sendToCSharp("open_dsm_dialog"));
+    }
+
+    // Cargar DTM (Modelo Digital del Terreno)
+    const btnLoadDtm = document.getElementById('btnLoadDtm');
+    if (btnLoadDtm) {
+        btnLoadDtm.addEventListener('click', () => sendToCSharp("open_dtm_dialog"));
+    }
+
     if (btnFocusGeoTiff) {
         btnFocusGeoTiff.addEventListener('click', () => {
             if (state.geotiffBounds) state.map.fitBounds(state.geotiffBounds, { padding: [40, 40] });
@@ -1270,21 +1310,55 @@ function renderTreeTable() {
     });
 }
 
-function updateMetricsAndUI() {
-    const inside = state.analyzedTrees.filter(t => t.IsInsideCorridor);
-    const crit = state.analyzedTrees.filter(t => t.RiskLevel === 'CRITICO').length;
-    const highMed = state.analyzedTrees.filter(t => t.RiskLevel === 'ALTO' || t.RiskLevel === 'MEDIO').length;
-    const safe = state.analyzedTrees.filter(t => t.RiskLevel === 'BAJO').length;
+let riskChart = null;
 
-    document.getElementById('kpiTotal').textContent = inside.length;
-    document.getElementById('kpiCritical').textContent = crit;
-    document.getElementById('kpiMedium').textContent = highMed;
-    document.getElementById('kpiSafe').textContent = state.analyzedTrees.filter(t => t.IsInsideCorridor && t.RiskLevel === 'MEDIO').length;
+function updateMetricsAndUI() {
+    const crit = state.analyzedTrees.filter(t => t.RiskLevel === 'CRITICO').length;
+    const alto = state.analyzedTrees.filter(t => t.RiskLevel === 'ALTO').length;
+    const medio = state.analyzedTrees.filter(t => t.RiskLevel === 'MEDIO').length;
+    const bajo = state.analyzedTrees.filter(t => t.RiskLevel === 'BAJO').length;
 
     document.getElementById('countAll').textContent = state.analyzedTrees.length;
     document.getElementById('countCrit').textContent = crit;
-    document.getElementById('countMed').textContent = highMed;
-    document.getElementById('countLow').textContent = safe;
+    document.getElementById('countMed').textContent = alto + medio;
+    document.getElementById('countLow').textContent = bajo;
+    
+    updatePieChart(crit, alto, medio, bajo);
+}
+
+function updatePieChart(crit, alto, medio, bajo) {
+    const ctx = document.getElementById('riskPieChart');
+    if (!ctx) return;
+    
+    const data = {
+        labels: ['Crtico', 'Alto', 'Medio', 'Bajo'],
+        datasets: [{
+            data: [crit, alto, medio, bajo],
+            backgroundColor: ['#ff3366', '#ff9900', '#ffcc00', '#00e676'],
+            borderWidth: 0,
+            hoverOffset: 4
+        }]
+    };
+    
+    if (riskChart) {
+        riskChart.data = data;
+        riskChart.update();
+    } else {
+        riskChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: data,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'right',
+                        labels: { color: '#e2e8f0', font: { size: 11, family: 'Segoe UI' } }
+                    }
+                }
+            }
+        });
+    }
 }
 
 function updateTreeModalData(tree) {

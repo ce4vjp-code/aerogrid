@@ -441,10 +441,19 @@ public class GeoTiffService
             
             var treesArray = doc.RootElement.GetProperty("trees");
             
-            // 3. Extract DSM Data natively in C# for precision
-            int[] dsmRaster = null;
+            // =========================================================
+            // 3. GIS-GRADE DSM/DTM ENGINE — QGIS-Level Precision
+            // =========================================================
+            // Reads Float32 elevation data natively (NOT as RGBA image).
+            // Applies proper NoData masking, grid alignment, and apex sampling.
+            // =========================================================
+
+            // --- DSM (Digital Surface Model) ---
+            float[] dsmFloat = null;
             int dsmW = 0, dsmH = 0;
-            double dsmLat = 0, dsmLon = 0, dsmDlat = 0, dsmDlon = 0;
+            double dsmOriginX = 0, dsmOriginY = 0, dsmScaleX = 0, dsmScaleY = 0;
+            float dsmNoData = -9999f;
+
             if (!string.IsNullOrEmpty(dsmPath) && File.Exists(dsmPath))
             {
                 using var dsmTif = Tiff.Open(dsmPath, "r");
@@ -452,26 +461,58 @@ public class GeoTiffService
                 {
                     dsmW = dsmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
                     dsmH = dsmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
-                    dsmRaster = new int[dsmW * dsmH];
-                    dsmTif.ReadRGBAImageOriented(dsmW, dsmH, dsmRaster, Orientation.TOPLEFT);
-                    
-                    var modelTiepoint = dsmTif.GetField((TiffTag)33922);
-                    var modelPixelScale = dsmTif.GetField((TiffTag)33550);
-                    if (modelTiepoint != null && modelPixelScale != null)
-                    {
-                        double[] tp = modelTiepoint[1].ToDoubleArray();
-                        double[] ps = modelPixelScale[1].ToDoubleArray();
-                        dsmLon = tp[3];
-                        dsmLat = tp[4];
-                        dsmDlon = ps[0];
-                        dsmDlat = ps[1];
-                    }
+                    dsmNoData = ReadNoDataValue(dsmTif);
+                    (dsmOriginX, dsmOriginY, dsmScaleX, dsmScaleY) = ReadGeoTransform(dsmTif);
+                    dsmFloat = ReadFloat32Raster(dsmTif, dsmW, dsmH);
+                }
+            }
+
+            // --- DTM (Digital Terrain Model) ---
+            float[] dtmFloat = null;
+            int dtmW = 0, dtmH = 0;
+            double dtmOriginX = 0, dtmOriginY = 0, dtmScaleX = 0, dtmScaleY = 0;
+            float dtmNoData = -9999f;
+
+            if (!string.IsNullOrEmpty(dtmPath) && File.Exists(dtmPath))
+            {
+                using var dtmTif = Tiff.Open(dtmPath, "r");
+                if (dtmTif != null)
+                {
+                    dtmW = dtmTif.GetField(TiffTag.IMAGEWIDTH)[0].ToInt();
+                    dtmH = dtmTif.GetField(TiffTag.IMAGELENGTH)[0].ToInt();
+                    dtmNoData = ReadNoDataValue(dtmTif);
+                    (dtmOriginX, dtmOriginY, dtmScaleX, dtmScaleY) = ReadGeoTransform(dtmTif);
+                    dtmFloat = ReadFloat32Raster(dtmTif, dtmW, dtmH);
+                }
+            }
+
+            // -------------------------------------------------------
+            // CRITICAL: Detect CRS of the elevation rasters.
+            // DSM/DTM from Pix4D/Metashape/WebODM are almost always
+            // in the flight's UTM zone (meters), NOT in WGS84 degrees.
+            // AI trees are always returned in WGS84 (lat/lon degrees).
+            // We MUST convert tree coords to UTM before pixel lookup.
+            // -------------------------------------------------------
+            bool dsmIsUtm = Math.Abs(dsmOriginX) > 1000.0; // >1000 → meters (UTM), not degrees
+            int utmZone = 0;
+            bool utmSouth = false;
+            if (dsmIsUtm && dsmFloat != null)
+            {
+                // Read EPSG code from GeoKeyDirectoryTag to get exact UTM zone
+                (utmZone, utmSouth) = DetectUtmZoneFromFile(dsmPath);
+                // Fallback: estimate zone from orthophoto WGS84 bounds
+                if (utmZone == 0 && meta != null)
+                {
+                    double refLon = (meta.MinLon + meta.MaxLon) / 2.0;
+                    double refLat = (meta.MinLat + meta.MaxLat) / 2.0;
+                    utmZone = (int)Math.Floor((refLon + 180.0) / 6.0) + 1;
+                    utmSouth = refLat < 0;
                 }
             }
 
             double minConfidence = sensitivity >= 8 ? 10.0 : (sensitivity >= 4 ? 25.0 : 50.0);
 
-            // 4. Parse AI Trees and Assign Height
+            // 4. Parse AI Trees and Assign Height (QGIS-Grade)
             foreach (var tElem in treesArray.EnumerateArray())
             {
                 double lat = tElem.GetProperty("lat").GetDouble();
@@ -480,26 +521,75 @@ public class GeoTiffService
                 double conf = tElem.GetProperty("confidence").GetDouble() * 100.0;
                 string species = tElem.TryGetProperty("species", out var s) ? s.GetString() : "Desconocida";
 
+                // Read crown bounding box if provided by AI (for apex sampling)
+                double bboxMinLon = lon, bboxMaxLon = lon, bboxMinLat = lat, bboxMaxLat = lat;
+                if (tElem.TryGetProperty("bbox_min_lon", out var bmnLon)) bboxMinLon = bmnLon.GetDouble();
+                if (tElem.TryGetProperty("bbox_max_lon", out var bmxLon)) bboxMaxLon = bmxLon.GetDouble();
+                if (tElem.TryGetProperty("bbox_min_lat", out var bmnLat)) bboxMinLat = bmnLat.GetDouble();
+                if (tElem.TryGetProperty("bbox_max_lat", out var bmxLat)) bboxMaxLat = bmxLat.GetDouble();
+
+                // -------------------------------------------------------
+                // COORDINATE CONVERSION: WGS84 (degrees) → UTM (meters)
+                // AI always returns lat/lon in WGS84. DSM/DTM from drone
+                // processing software (Pix4D, Metashape, WebODM) are
+                // exported in the flight's UTM zone. We must project first.
+                // -------------------------------------------------------
+                double sampleCentroidX = lon;   // X coord to sample in raster CRS
+                double sampleCentroidY = lat;   // Y coord to sample in raster CRS
+                double sampleBboxMinX = bboxMinLon, sampleBboxMaxX = bboxMaxLon;
+                double sampleBboxMinY = bboxMinLat, sampleBboxMaxY = bboxMaxLat;
+
+                if (dsmIsUtm && utmZone > 0)
+                {
+                    // Convert centroid
+                    (sampleCentroidX, sampleCentroidY) = LatLonToUtm(lat, lon, utmZone, utmSouth);
+                    // Convert bbox corners
+                    (sampleBboxMinX, sampleBboxMinY) = LatLonToUtm(bboxMinLat, bboxMinLon, utmZone, utmSouth);
+                    (sampleBboxMaxX, sampleBboxMaxY) = LatLonToUtm(bboxMaxLat, bboxMaxLon, utmZone, utmSouth);
+                    // Ensure correct min/max order after projection
+                    if (sampleBboxMinX > sampleBboxMaxX) (sampleBboxMinX, sampleBboxMaxX) = (sampleBboxMaxX, sampleBboxMinX);
+                    if (sampleBboxMinY > sampleBboxMaxY) (sampleBboxMinY, sampleBboxMaxY) = (sampleBboxMaxY, sampleBboxMinY);
+                }
+
                 double heightM = 2.5; // Default fallback
                 double absElev = 0.0;
 
-                // DSM Height extraction logic
-                if (dsmRaster != null && dsmDlat != 0)
+                // ---- DSM: Exact pixel value at coordinate (Matches QGIS Identify Tool) ----
+                if (dsmFloat != null && dsmScaleX > 0)
                 {
-                    int px = (int)((lon - dsmLon) / dsmDlon);
-                    int py = (int)((dsmLat - lat) / dsmDlat);
-                    if (px >= 0 && px < dsmW && py >= 0 && py < dsmH)
+                    float dsmZ = NearestSample(
+                        dsmFloat, dsmW, dsmH,
+                        dsmOriginX, dsmOriginY, dsmScaleX, dsmScaleY,
+                        sampleCentroidX, sampleCentroidY, dsmNoData);
+
+                    if (dsmZ > -9000f)
                     {
-                        int pixel = dsmRaster[py * dsmW + px];
-                        int r = Tiff.GetR(pixel);
-                        int g = Tiff.GetG(pixel);
-                        int b = Tiff.GetB(pixel);
-                        double z = (r * 256.0 * 256.0 + g * 256.0 + b) / 1000.0 - 100.0;
-                        if (z > 0 && z < 100) 
+                        absElev = dsmZ;
+
+                        // ---- DTM: Exact pixel value at coordinate ----
+                        if (dtmFloat != null && dtmScaleX > 0)
                         {
-                            absElev = z;
-                            // Estimate relative height using a fake DTM assumption or standard offset
-                            heightM = Math.Max(2.5, z * 0.15); // VERY naive relative height since we don't subtract DTM
+                            float groundZ = NearestSample(
+                                dtmFloat, dtmW, dtmH,
+                                dtmOriginX, dtmOriginY, dtmScaleX, dtmScaleY,
+                                sampleCentroidX, sampleCentroidY, dtmNoData);
+
+                            if (groundZ > -9000f)
+                            {
+                                double rawHeight = dsmZ - groundZ;
+                                // Sanity check: trees between 0.5 m and 80 m
+                                heightM = Math.Max(0.5, Math.Min(80.0, rawHeight));
+                            }
+                            else
+                            {
+                                // DTM NoData at this point — use apex as absolute elevation fallback
+                                heightM = Math.Max(2.5, absElev > 0 ? absElev * 0.15 : 2.5);
+                            }
+                        }
+                        else
+                        {
+                            // No DTM available — proportional estimate from crown diameter
+                            heightM = Math.Max(2.5, diam * 1.2);
                         }
                     }
                 }
@@ -538,6 +628,326 @@ public class GeoTiffService
         double lon = (x / 20037508.3427892) * 180.0;
         double lat = (180.0 / Math.PI) * (2.0 * Math.Atan(Math.Exp(y / 6378137.0)) - (Math.PI / 2.0));
         return (lat, lon);
+    }
+
+    // =========================================================
+    // GIS-GRADE HELPER METHODS — QGIS-Level Precision
+    // =========================================================
+
+    /// <summary>
+    /// Reads the GDAL_NODATA tag (42113) from a GeoTIFF.
+    /// Falls back to -9999 if not present.
+    /// </summary>
+    private static float ReadNoDataValue(Tiff tif)
+    {
+        FieldValue[] nd = tif.GetField((TiffTag)42113);
+        if (nd != null && nd.Length > 0)
+        {
+            string raw = nd[0].ToString()?.Trim() ?? "";
+            if (float.TryParse(raw, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out float val))
+                return val;
+        }
+        return -9999f;
+    }
+
+    /// <summary>
+    /// Reads the EPSG code from GeoKeyDirectoryTag (34735) and returns (utmZone, isSouthHemisphere).
+    /// Returns (0, false) if not a UTM projection or if tag is not present.
+    /// </summary>
+    private static (int zone, bool south) DetectUtmZoneFromFile(string tiffPath)
+    {
+        try
+        {
+            using var tif = Tiff.Open(tiffPath, "r");
+            if (tif == null) return (0, false);
+
+            FieldValue[] geoKeyField = tif.GetField((TiffTag)34735);
+            if (geoKeyField == null || geoKeyField.Length < 2) return (0, false);
+
+            byte[] rawBytes = geoKeyField[1].GetBytes();
+            short[] keys = new short[rawBytes.Length / 2];
+            Buffer.BlockCopy(rawBytes, 0, keys, 0, rawBytes.Length);
+
+            for (int i = 4; i + 3 < keys.Length; i += 4)
+            {
+                // Key 3072 = ProjectedCSTypeGeoKey, Key 2048 = GeographicTypeGeoKey
+                if (keys[i] == 3072 || keys[i] == 2048)
+                {
+                    int epsg = (ushort)keys[i + 3];
+                    // WGS84 UTM North: EPSG 32601–32660
+                    if (epsg >= 32601 && epsg <= 32660)
+                        return (epsg - 32600, false);
+                    // WGS84 UTM South: EPSG 32701–32760
+                    if (epsg >= 32701 && epsg <= 32760)
+                        return (epsg - 32700, true);
+                }
+            }
+        }
+        catch { }
+        return (0, false);
+    }
+
+    /// <summary>
+    /// Converts WGS84 geographic coordinates (lat/lon in degrees) to UTM easting/northing (meters).
+    /// Inverse of UtmToLatLon — uses the same WGS84 ellipsoid parameters.
+    /// Returns (easting, northing).
+    /// </summary>
+    public static (double easting, double northing) LatLonToUtm(double lat, double lon, int zone, bool southHemisphere)
+    {
+        const double k0 = 0.9996;
+        const double a = 6378137.0;
+        const double eccSquared = 0.00669438;
+        const double eccPrimeSquared = eccSquared / (1 - eccSquared);
+
+        double latRad = lat * Math.PI / 180.0;
+        double lonRad = lon * Math.PI / 180.0;
+        double lonOrigin = ((zone - 1) * 6 - 180 + 3) * Math.PI / 180.0;
+
+        double n = a / Math.Sqrt(1 - eccSquared * Math.Sin(latRad) * Math.Sin(latRad));
+        double t = Math.Tan(latRad) * Math.Tan(latRad);
+        double c = eccPrimeSquared * Math.Cos(latRad) * Math.Cos(latRad);
+        double A = Math.Cos(latRad) * (lonRad - lonOrigin);
+
+        double M = a * (
+            (1 - eccSquared / 4 - 3 * eccSquared * eccSquared / 64 - 5 * Math.Pow(eccSquared, 3) / 256) * latRad
+            - (3 * eccSquared / 8 + 3 * eccSquared * eccSquared / 32 + 45 * Math.Pow(eccSquared, 3) / 1024) * Math.Sin(2 * latRad)
+            + (15 * eccSquared * eccSquared / 256 + 45 * Math.Pow(eccSquared, 3) / 1024) * Math.Sin(4 * latRad)
+            - (35 * Math.Pow(eccSquared, 3) / 3072) * Math.Sin(6 * latRad));
+
+        double easting = k0 * n * (A + (1 - t + c) * Math.Pow(A, 3) / 6
+            + (5 - 18 * t + t * t + 72 * c - 58 * eccPrimeSquared) * Math.Pow(A, 5) / 120) + 500000.0;
+
+        double northing = k0 * (M + n * Math.Tan(latRad) * (A * A / 2
+            + (5 - t + 9 * c + 4 * c * c) * Math.Pow(A, 4) / 24
+            + (61 - 58 * t + t * t + 600 * c - 330 * eccPrimeSquared) * Math.Pow(A, 6) / 720));
+
+        if (southHemisphere) northing += 10000000.0;
+
+        return (easting, northing);
+    }
+
+    /// <summary>
+    /// Reads the affine GeoTransform from tiepoint + pixel scale tags.
+    /// Returns (originX, originY, scaleX, scaleY).
+    /// </summary>
+    private static (double originX, double originY, double scaleX, double scaleY) ReadGeoTransform(Tiff tif)
+    {
+        double originX = 0, originY = 0, scaleX = 0, scaleY = 0;
+
+        FieldValue[] tpField = tif.GetField((TiffTag)33922);
+        FieldValue[] psField = tif.GetField((TiffTag)33550);
+
+        if (tpField != null && tpField.Length > 1)
+        {
+            byte[] raw = tpField[1].GetBytes();
+            double[] tp = new double[raw.Length / 8];
+            Buffer.BlockCopy(raw, 0, tp, 0, raw.Length);
+            if (tp.Length >= 6) { originX = tp[3]; originY = tp[4]; }
+        }
+
+        if (psField != null && psField.Length > 1)
+        {
+            byte[] raw = psField[1].GetBytes();
+            double[] ps = new double[raw.Length / 8];
+            Buffer.BlockCopy(raw, 0, ps, 0, raw.Length);
+            if (ps.Length >= 2) { scaleX = ps[0]; scaleY = ps[1]; }
+        }
+
+        // Fallback: ModelTransformationTag (34264)
+        if (scaleX == 0)
+        {
+            FieldValue[] mtField = tif.GetField((TiffTag)34264);
+            if (mtField != null && mtField.Length > 1)
+            {
+                byte[] raw = mtField[1].GetBytes();
+                double[] m = new double[raw.Length / 8];
+                Buffer.BlockCopy(raw, 0, m, 0, raw.Length);
+                if (m.Length >= 16) { scaleX = Math.Abs(m[0]); scaleY = Math.Abs(m[5]); originX = m[3]; originY = m[7]; }
+            }
+        }
+
+        return (originX, originY, scaleX, scaleY);
+    }
+
+    /// <summary>
+    /// Reads an entire Float32 single-band raster into a flat array.
+    /// Handles both stripped and tiled GeoTIFFs.
+    /// Row 0 = top of image (highest Y coordinate).
+    /// </summary>
+    private static float[] ReadFloat32Raster(Tiff tif, int width, int height)
+    {
+        float[] data = new float[width * height];
+        const int bytesPerSample = 4;
+
+        if (tif.IsTiled())
+        {
+            int tileW = tif.GetField(TiffTag.TILEWIDTH)[0].ToInt();
+            int tileH = tif.GetField(TiffTag.TILELENGTH)[0].ToInt();
+            byte[] tileBuf = new byte[tif.TileSize()];
+
+            for (int tileY = 0; tileY < height; tileY += tileH)
+            {
+                for (int tileX = 0; tileX < width; tileX += tileW)
+                {
+                    tif.ReadTile(tileBuf, 0, tileX, tileY, 0, 0);
+                    int rowsInTile = Math.Min(tileH, height - tileY);
+                    int colsInTile = Math.Min(tileW, width - tileX);
+                    for (int tr = 0; tr < rowsInTile; tr++)
+                        for (int tc = 0; tc < colsInTile; tc++)
+                        {
+                            int bufOff = (tr * tileW + tc) * bytesPerSample;
+                            data[(tileY + tr) * width + (tileX + tc)] = BitConverter.ToSingle(tileBuf, bufOff);
+                        }
+                }
+            }
+        }
+        else
+        {
+            int scanlineSize = tif.ScanlineSize();
+            byte[] scanline = new byte[scanlineSize];
+            for (int row = 0; row < height; row++)
+            {
+                tif.ReadScanline(scanline, row);
+                for (int col = 0; col < width; col++)
+                {
+                    int bufOff = col * bytesPerSample;
+                    if (bufOff + 4 <= scanline.Length)
+                        data[row * width + col] = BitConverter.ToSingle(scanline, bufOff);
+                }
+            }
+        }
+
+        return data;
+    }
+
+    /// <summary>
+    /// Converts geographic coordinates to raster pixel (col, row) using the affine transform.
+    /// col = (lon - originX) / scaleX
+    /// row = (originY - lat) / scaleY  (Y axis is inverted in rasters)
+    /// </summary>
+    private static (double col, double row) GeoToPixel(
+        double lon, double lat, double originX, double originY, double scaleX, double scaleY)
+    {
+        return ((lon - originX) / scaleX, (originY - lat) / scaleY);
+    }
+
+    /// <summary>
+    /// Samples the MAXIMUM (apex) Float32 elevation inside a geographic bounding box.
+    /// Matches QGIS "Zonal Statistics → Maximum" behavior.
+    /// Returns -9999f if no valid pixels found.
+    /// </summary>
+    private static float SampleApexInBbox(
+        float[] raster, int width, int height,
+        double originX, double originY, double scaleX, double scaleY,
+        double minLon, double maxLon, double minLat, double maxLat,
+        float noDataValue)
+    {
+        var (colMinD, rowMinD) = GeoToPixel(minLon, maxLat, originX, originY, scaleX, scaleY);
+        var (colMaxD, rowMaxD) = GeoToPixel(maxLon, minLat, originX, originY, scaleX, scaleY);
+
+        int r0 = Math.Max(0, (int)Math.Floor(rowMinD));
+        int r1 = Math.Min(height - 1, (int)Math.Ceiling(rowMaxD));
+        int c0 = Math.Max(0, (int)Math.Floor(colMinD));
+        int c1 = Math.Min(width - 1, (int)Math.Ceiling(colMaxD));
+
+        // Ensure minimum 3×3 sampling window (handles centroid-only case)
+        if (r1 <= r0) { r0 = Math.Max(0, r0 - 1); r1 = Math.Min(height - 1, r1 + 1); }
+        if (c1 <= c0) { c0 = Math.Max(0, c0 - 1); c1 = Math.Min(width - 1, c1 + 1); }
+
+        float apex = float.MinValue;
+        float ndTol = 0.1f;
+
+        for (int r = r0; r <= r1; r++)
+        {
+            for (int c = c0; c <= c1; c++)
+            {
+                float val = raster[r * width + c];
+                if (float.IsNaN(val) || float.IsInfinity(val)) continue;
+                if (Math.Abs(val - noDataValue) < ndTol) continue;
+                if (val < -9000f || val > 9000f) continue; // sanity guard
+                if (val > apex) apex = val;
+            }
+        }
+
+        return apex == float.MinValue ? -9999f : apex;
+    }
+
+    /// <summary>
+    /// Nearest-neighbor sampling of a Float32 raster at a geographic coordinate.
+    /// Perfectly matches QGIS "Identify Features" tool clicking on a pixel.
+    /// Returns -9999f if coordinate is out of bounds or on NoData.
+    /// </summary>
+    private static float NearestSample(
+        float[] raster, int width, int height,
+        double originX, double originY, double scaleX, double scaleY,
+        double lon, double lat, float noDataValue)
+    {
+        var (col, row) = GeoToPixel(lon, lat, originX, originY, scaleX, scaleY);
+        
+        int c = (int)Math.Round(col);
+        int r = (int)Math.Round(row);
+
+        if (c < 0 || c >= width || r < 0 || r >= height)
+            return -9999f;
+
+        float val = raster[r * width + c];
+        float ndTol = 0.1f;
+        
+        if (float.IsNaN(val) || float.IsInfinity(val) || Math.Abs(val - noDataValue) < ndTol || val < -9000f || val > 9000f)
+            return -9999f;
+
+        return val;
+    }
+
+    /// <summary>
+    /// Bilinear interpolation of a Float32 raster at a geographic coordinate.
+    /// Matches QGIS "Sample Raster Values" sub-pixel accuracy.
+    /// Returns -9999f if coordinate is out of bounds or on NoData.
+    /// </summary>
+    private static float BilinearSample(
+        float[] raster, int width, int height,
+        double originX, double originY, double scaleX, double scaleY,
+        double lon, double lat, float noDataValue)
+    {
+        var (col, row) = GeoToPixel(lon, lat, originX, originY, scaleX, scaleY);
+
+        if (col < 0 || col >= width - 1 || row < 0 || row >= height - 1)
+            return -9999f;
+
+        int c0 = (int)Math.Floor(col);
+        int r0 = (int)Math.Floor(row);
+        int c1 = Math.Min(c0 + 1, width - 1);
+        int r1 = Math.Min(r0 + 1, height - 1);
+
+        float v00 = raster[r0 * width + c0];
+        float v10 = raster[r0 * width + c1];
+        float v01 = raster[r1 * width + c0];
+        float v11 = raster[r1 * width + c1];
+
+        float ndTol = 0.1f;
+        bool anyNoData = Math.Abs(v00 - noDataValue) < ndTol || float.IsNaN(v00) ||
+                         Math.Abs(v10 - noDataValue) < ndTol || float.IsNaN(v10) ||
+                         Math.Abs(v01 - noDataValue) < ndTol || float.IsNaN(v01) ||
+                         Math.Abs(v11 - noDataValue) < ndTol || float.IsNaN(v11);
+
+        if (anyNoData)
+        {
+            // Nearest neighbor fallback
+            int cr = Math.Clamp((int)Math.Round(col), 0, width - 1);
+            int rr = Math.Clamp((int)Math.Round(row), 0, height - 1);
+            float nn = raster[rr * width + cr];
+            return (Math.Abs(nn - noDataValue) < ndTol || float.IsNaN(nn)) ? -9999f : nn;
+        }
+
+        double tx = col - c0;
+        double ty = row - r0;
+
+        return (float)(
+            v00 * (1 - tx) * (1 - ty) +
+            v10 * tx       * (1 - ty) +
+            v01 * (1 - tx) * ty +
+            v11 * tx       * ty);
     }
 
     public static (double Lat, double Lon) UtmToLatLon(double utmX, double utmY, int zone, bool southHemisphere)

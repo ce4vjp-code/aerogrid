@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -102,6 +102,14 @@ public partial class MainWindow : Window
 
                 case "open_geotiff_dialog":
                     HandleOpenGeoTiffDialog();
+                    break;
+
+                case "open_dsm_dialog":
+                    HandleOpenDsmDialog();
+                    break;
+
+                case "open_dtm_dialog":
+                    HandleOpenDtmDialog();
                     break;
 
                 case "open_drone_photos_dialog":
@@ -377,12 +385,52 @@ public partial class MainWindow : Window
         var openFileDialog = new OpenFileDialog
         {
             Title = "Seleccionar Ortofoto GeoTIFF",
-            Filter = "ImÃ¡genes GeoTIFF (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
+            Filter = "Imágenes GeoTIFF (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
         };
 
         if (openFileDialog.ShowDialog() == true)
         {
             LoadGeoTiffFromPath(openFileDialog.FileName);
+        }
+    }
+
+    private void HandleOpenDsmDialog()
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "Seleccionar DSM (Modelo Digital de Superficie)",
+            Filter = "GeoTIFF de Elevación (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
+        };
+
+        if (dlg.ShowDialog() == true)
+        {
+            _currentDsmPath = dlg.FileName;
+            SendToJs("dsm_loaded", new
+            {
+                filename = Path.GetFileName(_currentDsmPath),
+                path = _currentDsmPath,
+                has_dsm = true
+            });
+        }
+    }
+
+    private void HandleOpenDtmDialog()
+    {
+        var dlg = new OpenFileDialog
+        {
+            Title = "Seleccionar DTM (Modelo Digital del Terreno)",
+            Filter = "GeoTIFF de Elevación (*.tif;*.tiff)|*.tif;*.tiff|Todos los archivos (*.*)|*.*"
+        };
+
+        if (dlg.ShowDialog() == true)
+        {
+            _currentDtmPath = dlg.FileName;
+            SendToJs("dtm_loaded", new
+            {
+                filename = Path.GetFileName(_currentDtmPath),
+                path = _currentDtmPath,
+                has_dtm = true
+            });
         }
     }
 
@@ -795,23 +843,30 @@ public partial class MainWindow : Window
 
     private void HandleAddManualTree(double lat, double lon)
     {
-        string newId = $"ARB-MAN-{(new Random().Next(1000, 9999))}";
-        var manualTree = new TreeModel
+        try 
         {
-            Id = newId,
-            Latitude = lat,
-            Longitude = lon,
-            HeightM = 15.0,
-            CrownDiameterM = 3.0,
-            Species = "Manual (No Identificado)",
-            ConfidencePct = 100.0,
-            SourcePhoto = "Manual"
-        };
+            string newId = $"ARB-MAN-{(new Random().Next(1000, 9999))}";
+            var manualTree = new TreeModel
+            {
+                Id = newId,
+                Latitude = lat,
+                Longitude = lon,
+                HeightM = 15.0,
+                CrownDiameterM = 3.0,
+                Species = "Manual (No Identificado)",
+                ConfidencePct = 100.0,
+                SourcePhoto = "Manual"
+            };
 
-        _gisEngine.AnalyzeTreeMultiSegment(manualTree, _currentLineSegments, _currentCorridorWidthM);
-        
-        _currentTrees.Add(manualTree);
-        SendToJs("refresh_trees", new { trees = _currentTrees });
+            _gisEngine.AnalyzeTreeMultiSegment(manualTree, _currentLineSegments, _currentCorridorWidthM);
+            
+            _currentTrees.Add(manualTree);
+            SendToJs("refresh_trees", new { trees = _currentTrees });
+        }
+        catch (Exception ex)
+        {
+            SendToJs("error", new { message = "Error agregando ǭrbol manual: " + ex.Message });
+        }
     }
 
     private void HandleUpdateTreeHeight(string treeId, double newHeightM)
