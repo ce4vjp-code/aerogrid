@@ -25,17 +25,40 @@ class AnalyzeRequest(BaseModel):
 
 @app.post("/analyze")
 async def analyze_orthophoto(req: AnalyzeRequest):
-    base_windows_path = r"C:\Users\Cristian\Downloads"
     req_path = req.orthophoto_path.replace("\\", "/")
-    base_path = base_windows_path.replace("\\", "/")
-    if req_path.lower().startswith(base_path.lower()):
-        rel_path = req_path[len(base_path):].lstrip("/")
-        img_path = os.path.join("/downloads", rel_path)
-    else:
-        img_path = req.orthophoto_path
+    
+    # Try multiple path candidates so it works on any PC, any drive, and any user folder
+    possible_paths = [req_path]
 
-    if not os.path.exists(img_path):
-        raise HTTPException(status_code=404, detail=f"Orthophoto not found: {img_path}")
+    # 1. Drive letter mapping (e.g. C:/... -> /host_c/...)
+    if len(req_path) >= 2 and req_path[1] == ':':
+        drive = req_path[0].lower()
+        rest = req_path[2:].lstrip("/")
+        possible_paths.append(f"/host_{drive}/{rest}")
+        possible_paths.append(f"/{drive}/{rest}")
+        possible_paths.append(f"/mnt/{drive}/{rest}")
+
+    # 2. Legacy /downloads mapping (C:\Users\...\Downloads)
+    base_windows_path = r"C:/Users/Cristian/Downloads"
+    if req_path.lower().startswith(base_windows_path.lower()):
+        rel_path = req_path[len(base_windows_path):].lstrip("/")
+        possible_paths.append(os.path.join("/downloads", rel_path))
+
+    # 3. Workspace relative or basename fallback
+    possible_paths.append(os.path.join("/app/workspace", os.path.basename(req_path)))
+    possible_paths.append(os.path.join("/downloads", os.path.basename(req_path)))
+
+    img_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            img_path = p
+            break
+
+    if not img_path:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Orthophoto not found: '{req.orthophoto_path}'. Tried container paths: {possible_paths}"
+        )
 
     try:
         from rasterio.warp import transform as transform_crs

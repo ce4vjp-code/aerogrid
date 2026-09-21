@@ -17,7 +17,8 @@ services:
       - "8000:8000"
     restart: unless-stopped
     volumes:
-      - C:/Users/Cristian/Downloads:/downloads
+      - C:/:/host_c:ro
+      - ./:/app/workspace:ro
       - ./PowerScan3D.AI/main.py:/app/main.py
       - ./NEON.pt:/app/NEON.pt
 

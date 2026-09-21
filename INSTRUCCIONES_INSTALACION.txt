@@ -1,0 +1,63 @@
+========================================================================
+             AEROGRID (ALPHA 0.2.0) - PAQUETE DE INSTALACION
+     Inspeccion Aerea, Fotogrametria y Deteccion de Vegetacion con IA
+========================================================================
+
+Este paquete contiene todo lo necesario para instalar y ejecutar AeroGrid
+en cualquier computador nuevo o de pruebas de forma 100% automatizada.
+
+------------------------------------------------------------------------
+1. METODO 1: INSTALADOR AUTOMATICO (RECOMENDADO)
+------------------------------------------------------------------------
+Hemos creado un instalador que hace todo en un solo paso:
+
+1. Copia esta carpeta completa a tu pendrive o disco duro.
+2. En el PC nuevo, abre la carpeta y haz clic derecho en:
+   
+   👉 "Instalar_AeroGrid.bat" -> "Ejecutar como administrador"
+
+El instalador hara todo por ti:
+ - Copiara el programa a C:\AeroGrid.
+ - Verificara si Docker Desktop esta instalado; si no lo esta, te permitira
+   instalarlo automaticamente con un solo clic.
+ - Descargara y levantara los contenedores (NodeODM y el motor de IA).
+ - Creara el acceso directo "AeroGrid" en el Escritorio con su icono.
+ - Te permitira abrir la aplicacion inmediatamente al terminar.
+
+------------------------------------------------------------------------
+2. METODO 2: USO PORTABLE DIRECTO (SIN INSTALADOR)
+------------------------------------------------------------------------
+Si prefieres no instalar nada en el sistema y solo correrlo desde una carpeta:
+
+1. Asegurate de tener Docker Desktop abierto.
+2. Haz doble clic en "Iniciar_AeroGrid.bat":
+   - Este script verificara que Docker este listo, encendera los contenedores
+     en segundo plano y abrira AeroGrid maximizado.
+3. Al terminar tus pruebas, si deseas liberar RAM y GPU, haz doble clic en:
+   - "Detener_AeroGrid.bat"
+
+------------------------------------------------------------------------
+3. USO 100% OFFLINE (PARA PCS SIN ACCESO A INTERNET)
+------------------------------------------------------------------------
+Si el PC de pruebas no tiene conexion a internet para descargar las imagenes
+de Docker (NodeODM pesa ~5 GB y la IA ~2 GB):
+
+1. En tu PC actual (con internet y Docker encendido), ejecuta:
+   "Exportar_Contenedores_Offline.bat"
+2. Esto creara una carpeta llamada "images" con los archivos .tar de los
+   contenedores.
+3. Lleva esa carpeta "images" junto con el instalador al PC de pruebas.
+4. El instalador detectara las imagenes locales y las cargara al instante
+   sin consumir ni un solo megabyte de internet.
+
+------------------------------------------------------------------------
+4. CONTENIDO DEL PAQUETE
+------------------------------------------------------------------------
+* Instalar_AeroGrid.bat       : Instalador automatico con privilegios de admin.
+* Iniciar_AeroGrid.bat        : Lanzador inteligente (enciende Docker y abre la app).
+* Detener_AeroGrid.bat        : Detiene los motores y libera la memoria RAM.
+* Exportar_Contenedores_Offline.bat : Generador del paquete offline para pendrive.
+* App\                        : Ejecutable (.exe) y librerias nativas de AeroGrid.
+* PowerScan3D.AI\             : Motor de Inteligencia Artificial (Python/FastAPI).
+* NEON.pt                     : Pesos de la Red Neuronal YOLO para deteccion de arboles.
+* docker-compose.yml          : Configuracion de los contenedores NodeODM e IA.
